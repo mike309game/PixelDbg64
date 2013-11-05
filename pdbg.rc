@@ -1,0 +1,27 @@
+1 VERSIONINFO
+FILEVERSION     0,5,0,0
+PRODUCTVERSION  0,5,0,0
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904E4"
+    BEGIN
+      VALUE "Nikita Kindt", "Nikita Kindt"
+      VALUE "FileDescription", "PixelDbg"
+      VALUE "FileVersion", "0.5"
+      VALUE "InternalName", "PixelDbg"
+      VALUE "LegalCopyright", "Nikita Kindt"
+      VALUE "OriginalFilename", "PixelDbg.exe"
+      VALUE "ProductName", "PixelDbg"
+      VALUE "ProductVersion", "0.5"
+    END
+  END
+
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1252
+  END
+END
+
+1001 ICON "pdbg.ico"
+

@@ -1,0 +1,25 @@
+PixelDbg
+
+Copyright (C) 2013 Nikita Kindt (n.kindt.pdbg@gmail.com)
+All rights reserved.
+
+About:
+
+PixelDbg allows you to enter or open any data stream and look at it. All data feeded to PixelDbg will be displayed in the main window with the ability to scroll through it and change
+various parameters to help find or inspect images in the stream. Large unknown archives can be checked for images if they are not compressed or encrypted. Compressed or encrypted
+data can be easily discovered with noise in the image (due to high entropy). Any sort of image can be produced by simply typing image data into the application.
+
+Current features:
+
+* Rifle through gigabytes of data visually (unknown archives, OS swap files, etc.)
+* Change pixelformat, scanline, tiling, etc on the fly to find images in any data
+* Visually tell if data might be compressed, encrypted or compressable
+* Open any file for debugging or type/copy pixels directly into editbox
+* Save current view as an image for later analysis
+
+Current limitations:
+
+* Maximum image resolution is 1024x1024 (larger images will look distorted due to invalid scanline stride but tiling can be used here)
+* Window resize is clamped to maximum resolution
+* Maximum filesize is 2^32
+* Pixel format maximum is 32 bpp with no more then 8 bit per channel (i.e. valid format is 5.5.5.1 but not 9.9.9.5)
