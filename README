@@ -3,7 +3,8 @@ PixelDbg
 Copyright (C) 2013 Nikita Kindt (n.kindt.pdbg@gmail.com)
 All rights reserved.
 
-About:
+
+1. About:
 
 PixelDbg allows you to enter or open any data stream and look at it. All data feeded to PixelDbg will be displayed in the main window with the ability to scroll through it and change
 various parameters to help find or inspect images in the stream. Large unknown archives can be checked for images if they are not compressed or encrypted. Compressed or encrypted
@@ -23,3 +24,13 @@ Current limitations:
 * Window resize is clamped to maximum resolution
 * Maximum filesize is 2^32
 * Pixel format maximum is 32 bpp with no more then 8 bit per channel (i.e. valid format is 5.5.5.1 but not 9.9.9.5)
+
+
+
+2. Compile with MinGW:
+
+* Download FLTK 1.3.x and compile (in CMake choose mingw makefile).
+* Execute make.bat in PixelDbg folder with the first argument being the path to extracted FLTK directory and second argument being the path to the compiled "libfltk.a".
+
+Example:
+make C:\Path\To\fltk C:\Path\To\fltk\bin-mingw\lib
