@@ -56,6 +56,11 @@ namespace
 	{
 		return std::min(std::max(i, l), h);
 	}
+	
+	int randomInt(int _min, int _max)
+	{
+		return (_min + (rand() % (_max - _min + 1)));
+	}
 };
 
 //
@@ -149,7 +154,7 @@ int MyWindow::handle(int event)
 		x -= m_imageBox.x();
 		y -= m_imageBox.y();
 		
-		// Take flipping ops into acount
+		// Take flipping ops into account
 		if(m_flipV.value() != 0)
 		{
 			y = h - y;
@@ -375,7 +380,7 @@ bool MyWindow::updatePixelFormat(bool startup /* false */)
 	return false;
 }
 
-void MyWindow::convertData(const u8* data, u8* rgbOut, u32 size, u32 tileX, u32 tileY)
+void MyWindow::convertData(const u8* data, u8* rgbOut, u32 size, u32 tileX, u32 tileY, u8* palette /* NULL */)
 {
 	int bitMask[4];
 	int rgbaChannels[4];
@@ -398,13 +403,13 @@ void MyWindow::convertData(const u8* data, u8* rgbOut, u32 size, u32 tileX, u32 
 	int rdiff = 8 - bitCount[rgbaChannels[0]];
 	int gdiff = 8 - bitCount[rgbaChannels[1]];
 	int bdiff = 8 - bitCount[rgbaChannels[2]];
-
+	
 	// Align backwards
 	while(size % ps != 0)
 	{
 		--size;
 	}
-
+	
 	// Convert
 	u32 width = static_cast<u32>(getImageWidth());
 	u32 height = static_cast<u32>(getImageHeight());
@@ -428,11 +433,7 @@ void MyWindow::convertData(const u8* data, u8* rgbOut, u32 size, u32 tileX, u32 
 				for(u32 x=0; x<tileX; ++x, dest+=3, ++pixels)
 				{				
 					u32 i = (by + y) * stride + (bx + x) * ps;
-					if(i >= size)
-					{
-						break;
-					}
-					
+				
 					// Read pixel byte-wise
 					u32 pixel = 0;
 					for(u32 j=0; j<ps; ++j)
@@ -483,12 +484,24 @@ void MyWindow::convertData(const u8* data, u8* rgbOut, u32 size, u32 tileX, u32 
 						break;
 					}
 					
-					// Check for alpha-only mode explictly and replicate alpha in all channels
+					// Check for alpha-only mode explictly and replicate alpha in all channels or use palette
 					if(rgbaBits[0] == 0 && rgbaBits[1] == 0 && rgbaBits[2] == 0)
 					{
-						rgbOut[dest+0] = pixel;
-						rgbOut[dest+1] = pixel;
-						rgbOut[dest+2] = pixel;
+						if(palette)
+						{
+							// Palette mode
+							rgbOut[dest+0] = palette[pixel+0];
+							rgbOut[dest+1] = palette[pixel+1];
+							rgbOut[dest+2] = palette[pixel+2];
+						}
+						else
+						{
+							// Greyscale mode
+							rgbOut[dest+0] = pixel;
+							rgbOut[dest+1] = pixel;
+							rgbOut[dest+2] = pixel;
+						}
+						
 						continue;
 					}
 					
@@ -663,7 +676,7 @@ void MyWindow::ButtonCallback(Fl_Widget* widget, void* param)
 			        }	
 			    }
 			    
-			    size = std::min(size - offset, kMaxDim * kMaxDim * 3); // TODO: Change to kImageSzie
+			    size = std::min(size - offset, kMaxImageSize);
 			    p->m_accumOffset = offset;
 			    
 			    memset(p->m_text, 0, kMaxBufferSize);
@@ -817,6 +830,103 @@ void MyWindow::TileCallback(Fl_Widget* widget, void* param)
 	}
 }
 
+void MyWindow::PaletteCallback(Fl_Widget* widget, void* param)
+{
+	if(!param)
+	{
+		return;
+	}
+	MyWindow* p = static_cast<MyWindow*>(param);
+	
+	if(widget == &p->m_paletteMode)
+	{
+		if(p->m_paletteMode.value() == 0)
+		{
+			p->m_randomizePalette.deactivate();
+			p->m_paletteMin.deactivate();
+			p->m_paletteMax.deactivate();
+			p->m_loadPalette.deactivate();
+		}
+		else
+		{
+			p->m_randomizePalette.activate();
+			p->m_paletteMin.activate();
+			p->m_paletteMax.activate();
+			p->m_loadPalette.activate();
+			
+			// Turn on 8 bpp pixel format
+			p->m_rgbaBits.value("0.0.0.8");
+			p->updatePixelFormat();
+		}
+		
+		UpdateCallback(widget, param);
+	}
+	else if(widget == &p->m_randomizePalette)
+	{
+		int pmin = atoi(p->m_paletteMin.value());
+		int pmax = atoi(p->m_paletteMax.value());
+				
+		for(int i=0; i<256*3; i+=3)
+		{
+			int r = randomInt(pmin, pmax);
+			int g = randomInt(pmin, pmax);
+			int b = randomInt(pmin, pmax);
+			
+			p->m_palette[i+0] = r;
+			p->m_palette[i+1] = g;
+			p->m_palette[i+2] = b;
+		}
+		
+		UpdateCallback(widget, param);
+	}
+	else if(widget == &p->m_paletteMin)
+	{
+		int i = atoi(p->m_paletteMin.value());
+		if(i < 0 || i > 255)
+		{
+			i = clampValue(i, 0, 255);
+			p->m_paletteMin.value(intToString(i));
+		}
+	}
+	else if(widget == &p->m_paletteMax)
+	{
+		int i = atoi(p->m_paletteMax.value());
+		if(i < 0 || i > 255)
+		{
+			i = clampValue(i, 0, 255);
+			p->m_paletteMax.value(intToString(i));
+		}
+	}
+	else if(widget == &p->m_loadPalette)
+	{
+		Fl_Native_File_Chooser browser;
+		browser.title("Load palette from file (first 768 bytes)");
+		browser.type(Fl_Native_File_Chooser::BROWSE_FILE);
+		browser.filter("Any file\t*.*\n");
+		
+		if(browser.show() == 0)
+		{
+			// Reset palette
+			memset(p->m_palette, 0, sizeof(p->m_palette));
+			
+			const char* filename = browser.filename();
+			FILE* f = fopen(filename, "rb");
+			if(f)
+			{
+				fseek(f, 0, SEEK_END);
+			    u32 size = static_cast<u32>(ftell(f));
+			    fseek(f, 0, SEEK_SET);
+			    
+			    size = clampValue<u32>(size, 0, sizeof(p->m_palette));
+			    fread(p->m_palette, size, 1, f);	
+				fclose(f);
+				
+				UpdateCallback(widget, param);
+			}
+		}
+	}
+}
+
 void MyWindow::OpsCallback(Fl_Widget* widget, void* param)
 {
 	if(!param)
@@ -880,8 +990,9 @@ void MyWindow::UpdateCallback(Fl_Widget* widget, void* param) // Callback to upd
 	memset(p->m_pixels, 0, size);
 	
 	// Convert new data
+	bool paletteMode = p->m_paletteMode.value() != 0;
 	length = std::min(size, length);
-	p->convertData(text, p->m_pixels, length, u32(tx), u32(ty));
+	p->convertData(text, p->m_pixels, length, u32(tx), u32(ty), paletteMode ? p->m_palette : NULL);
 	
 	// See if we have other ops to perform on the data (we could combine some of them to save time but maybe later):
 	// Vertical flip ?

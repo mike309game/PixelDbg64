@@ -1,3 +1,10 @@
+10th Novemebr 2013
+
++ Added palette mode
+* Fixed size limit in RGBA mode when converting to new pixels
+
+
+
 9th Novemebr 2013
 
 + Added horizontal and vertical flipping ops on displayed image

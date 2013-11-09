@@ -85,14 +85,15 @@ public:
 	static const u32 kMaxDim = 1024;
 	static const u32 kMaxBufferSize = kMaxDim * kMaxDim * 4;
 	static const u32 kMaxImageSize = kMaxDim * kMaxDim * 3;
-	static const float kVersion = 0.6f;
+	static const float kVersion = 0.65f;
 	
 	MyWindow(const char* text) :
 		Fl_Double_Window(855, 515, text),
 		m_dimGroup(5, 2, 195, 90),
 		m_fileGroup(5, 95, 195, 80),
 		m_formatGroup(5, 178, 195, 106),
-        m_opsGroup(5, 287, 195, 65),
+		m_paletteGroup(5, 287, 195, 87),
+		m_opsGroup(5, 377, 195, 65),
 		m_width(120, 5, 70, 20, "Width [1, 1024]:"),
 		m_height(120, 27, 70, 20, "Height [1, 1024]:"),
 		m_data(60, 49, 130, 22, "Data:"),
@@ -110,18 +111,23 @@ public:
 		m_tile(11, 257, 47, 20, "Tile"),
 		m_tileX(78, 257, 45, 20, "X:"),
 		m_tileY(145, 257, 45, 20, "Y:"),
-		m_flipV(11, 291, 185, 20, "Flip vertically"),
-		m_flipH(11, 309, 185, 20, "Flip horizontally"),
-		m_colorCount(11, 327, 185, 20, "Count colors"),
+		m_paletteMode(11, 292, 95, 20, "Use palette"),
+		m_randomizePalette(111, 292, 79, 22, "Randomize"),
+		m_paletteMin(47, 317, 45, 20, "Min.:"),
+		m_paletteMax(145, 317, 45, 20, "Max.:"),
+		m_loadPalette(15, 342, 175, 25, "Load palette from file"),
+		m_flipV(11, 381, 185, 20, "Flip vertically"),
+		m_flipH(11, 399, 185, 20, "Flip horizontally"),
+		m_colorCount(11, 417, 185, 20, "Count colors"),
 		m_imageBox(210, 2, 0, 0),
-		m_aboutButton(5, 357, 195, 23, "About"),
+		m_aboutButton(5, 447, 195, 23, "About"),
 		m_windowSize(this->w(), this->h()),
 		m_cursorChanged(false),
 		m_accumOffset(0),
 		m_offsetChanged(false)
 	{	
-		// Limit window size on resize (1x352 as minimum image)
-		size_range(216, 355, 1239, 1045);
+		// Limit window size on resize (1x282 as minimum image)
+		size_range(216, 285, 1239, 1045);
 		
 		m_dimGroup.box(FL_ENGRAVED_BOX);
 		m_dimGroup.color(FL_DARK1);
@@ -129,6 +135,8 @@ public:
 		m_fileGroup.color(FL_DARK1);
 		m_formatGroup.box(FL_ENGRAVED_BOX);
 		m_formatGroup.color(FL_DARK1);
+		m_paletteGroup.box(FL_ENGRAVED_BOX);
+		m_paletteGroup.color(FL_DARK1);
 		m_opsGroup.box(FL_ENGRAVED_BOX);
 		m_opsGroup.color(FL_DARK1);
 		
@@ -251,6 +259,44 @@ public:
 		m_tileY.callback(TileCallback, this);
 		m_tileY.tooltip("Tile image in Y. Number of tiles is calculated as (height / tileY).");
 		
+		m_paletteMode.when(FL_WHEN_CHANGED);
+		m_paletteMode.down_box(FL_DIAMOND_DOWN_BOX);
+		m_paletteMode.callback(UpdateCallback, this);
+		m_paletteMode.tooltip("If checked, use randomized palette to display image.");
+		
+		m_paletteMode.when(FL_WHEN_CHANGED);
+		m_paletteMode.callback(PaletteCallback, this);
+			
+		m_randomizePalette.box(FL_THIN_UP_BOX);
+		m_randomizePalette.when(FL_WHEN_RELEASE);
+		m_randomizePalette.callback(PaletteCallback, this);
+		m_randomizePalette.deactivate();
+		
+		m_paletteMin.maximum_size(3);
+		m_paletteMin.insert("0");
+		m_paletteMin.type(FL_INT_INPUT);
+		m_paletteMin.textfont(FL_COURIER);
+		m_paletteMin.textsize(12);
+		m_paletteMin.when(FL_WHEN_CHANGED);
+		m_paletteMin.callback(PaletteCallback, this);
+		m_paletteMin.deactivate();
+		m_paletteMin.tooltip("Min. range when generating random palette.");
+
+		m_paletteMax.maximum_size(3);
+		m_paletteMax.insert("255");
+		m_paletteMax.type(FL_INT_INPUT);
+		m_paletteMax.textfont(FL_COURIER);
+		m_paletteMax.textsize(12);
+		m_paletteMax.when(FL_WHEN_CHANGED);
+		m_paletteMax.callback(PaletteCallback, this);
+		m_paletteMax.deactivate();
+		m_paletteMax.tooltip("Max. range when generating random palette.");
+		
+		m_loadPalette.box(FL_THIN_UP_BOX);
+		m_loadPalette.when(FL_WHEN_RELEASE);
+		m_loadPalette.callback(PaletteCallback, this);
+		m_loadPalette.deactivate();
+		
 		m_flipV.when(FL_WHEN_CHANGED);
 		m_flipV.down_box(FL_DIAMOND_DOWN_BOX);
 		m_flipV.callback(UpdateCallback, this);
@@ -276,6 +322,9 @@ public:
 		
 		// Show current pixel format
 		updatePixelFormat(true);
+		
+		// Fixed seed on purpose. Every random palette is reproduceable!
+		srand(213123);
 	}
 	
 	~MyWindow()
@@ -294,7 +343,7 @@ public:
 	bool getPixelFormat(int bitMask[4], int rgbaChannels[4], int rgbaBits[4], int& pixelSize) const;
 	int getPixelSize() const;
 	bool updatePixelFormat(bool startup = false);
-	void convertData(const u8* data, u8* rgbOut, u32 size, u32 tileX, u32 tileY);
+	void convertData(const u8* data, u8* rgbOut, u32 size, u32 tileX, u32 tileY, u8* palette = NULL);
 	bool writeBitmap(const char* filename);
 	bool writeTga(const char* filename);
 	
@@ -325,6 +374,7 @@ private:
 	static void ChannelCallback(Fl_Widget* widget, void* param);
 	static void DimCallback(Fl_Widget* widget, void* param);
 	static void TileCallback(Fl_Widget* widget, void* param);
+	static void PaletteCallback(Fl_Widget* widget, void* param);
 	static void OpsCallback(Fl_Widget* widget, void* param);
 	static void UpdateCallback(Fl_Widget* widget, void* param);
 
@@ -332,7 +382,8 @@ public:
 	Fl_Box m_dimGroup;
 	Fl_Box m_fileGroup;
 	Fl_Box m_formatGroup;
-    Fl_Box m_opsGroup;
+	Fl_Box m_paletteGroup;
+	Fl_Box m_opsGroup;
 	Fl_Input m_width;
 	Fl_Input m_height;
 	Fl_Input m_data;
@@ -350,6 +401,11 @@ public:
 	Fl_Check_Button m_tile;
 	Fl_Input m_tileX;
 	Fl_Input m_tileY;
+	Fl_Check_Button m_paletteMode;
+	Fl_Button m_randomizePalette;
+	Fl_Input m_paletteMin;
+	Fl_Input m_paletteMax;
+	Fl_Button m_loadPalette;
 	Fl_Check_Button m_flipV;
 	Fl_Check_Button m_flipH;
 	Fl_Check_Button m_colorCount;
@@ -366,6 +422,7 @@ public:
 	char m_offsetText[32]; // To avoid memory allocs
 	char m_currentFile[260];
 	char m_rawMemoryFlRGBImage[sizeof(Fl_RGB_Image)];
+	u8 m_palette[256 * 3];
 };
 
 #endif
