@@ -1,3 +1,12 @@
+9th Novemebr 2013
+
++ Added horizontal and vertical flipping ops on displayed image
++ Added ability to count displayed colors
+* Replaced itoa() function for cross-platform compatibility (thanks to Petar Cigularov)
+* Fixed wrong groupbox check for valid pixel format
+
+
+
 5th November 2013
 
 + Initial

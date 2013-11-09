@@ -1,6 +1,6 @@
 /***************************************************************************
  *                                                                         *
- *   Copyright (C) 2013 Nikita Kindt (n.kindt.pdbg@gmail.com)    		   *
+ *   Copyright (C) 2013 Nikita Kindt (n.kindt.pdbg@gmail.com)              *
  *                                                                         *
  *   File is part of PixelDbg:                                             *
  *   https://sourceforge.net/projects/pixeldbg/                            *
@@ -24,12 +24,11 @@
 
 #include "main.h"
 
-//
 // Entry point:
-//
 int main(int argc, char** argv)
 {
 	char buff[32];
+	memset(buff, 0, sizeof(buff));
 	snprintf(buff, sizeof(buff), "PixelDbg %.2f", MyWindow::kVersion);
 
 	MyWindow window(buff);
@@ -38,6 +37,26 @@ int main(int argc, char** argv)
 	
 	return Fl::run();
 }
+
+//
+// Static helper functions
+//
+namespace
+{
+	const char* intToString(int i) // Base 10
+	{
+		static char s_buff[16];
+		memset(s_buff, 0, sizeof(s_buff));
+		snprintf(s_buff, sizeof(s_buff), "%d", i);
+		return s_buff;
+	}
+	
+	template <typename T>
+	T clampValue(T i, T l, T h)
+	{
+		return std::min(std::max(i, l), h);
+	}
+};
 
 //
 // MyWindow
@@ -56,12 +75,12 @@ void MyWindow::draw()
 		int deltah = h - m_windowSize.y;
 		m_windowSize.set(w, h);
 		
-		char num[16];
-		imagew = std::min(std::max(imagew + deltaw, 1), (int)kMaxDim);
-		m_width.value(itoa(imagew, num, 10));
-		imageh = std::min(std::max(imageh + deltah, 1), (int)kMaxDim);
-		m_height.value(itoa(imageh, num, 10));
-        
+		imagew = clampValue(imagew + deltaw, 1, (int)kMaxDim);
+		m_width.value(intToString(imagew));
+		
+		imageh = clampValue(imageh + deltah, 1, (int)kMaxDim);
+		m_height.value(intToString(imageh));
+		
 		// Redraw image
 		// Note: Passing <this> for widget indicates that we currently resize the window and can't flush!
 		UpdateCallback(this, this);
@@ -72,13 +91,13 @@ void MyWindow::draw()
 	
 int MyWindow::handle(int event)
 {
-    bool ctrlDown = false;
+	bool ctrlDown = false;
 	bool insideImage = false;
 	u32 w, h, x, y, r, b;
 	
 	if(Fl::event_state() == FL_CTRL)
 	{
-        // Check if we have a valid image
+		// Check if we have a valid image
 		if(m_imageBox.w() > 0 && m_imageBox.h() > 0)
 		{
 			w = static_cast<u32>(getImageWidth());
@@ -90,17 +109,17 @@ int MyWindow::handle(int event)
 			
 			if(x >= m_imageBox.x() && y >= m_imageBox.y() && x <= r && y <= b)
 			{
-                ctrlDown = true;
+				ctrlDown = true;
 				insideImage = true;
-            
+				
 				// Change cursor
 				if(!m_cursorChanged)
 				{
 					cursor(FL_CURSOR_CROSS);
 					m_cursorChanged = true;
-                    
-                    m_offset.color(FL_YELLOW);
-                    m_offset.redraw();
+					
+					m_offset.color(FL_YELLOW);
+					m_offset.redraw();
 				}
 			}
 		}
@@ -112,15 +131,15 @@ int MyWindow::handle(int event)
 			// Change cursor back to default
 			cursor(FL_CURSOR_DEFAULT);
 			m_cursorChanged = false;
-
-            m_offset.color(FL_WHITE);
-            m_offset.redraw();
-            
-            // Reload file if desired (argument == 255 won't open file dialog window)
-            if(m_autoReload.value() != 0)
-            {
-                ButtonCallback(&m_openButton, this);
-            }
+			
+			m_offset.color(FL_WHITE);
+			m_offset.redraw();
+			
+			// Reload file if desired
+			if(m_autoReload.value() != 0)
+			{
+				ButtonCallback(&m_openButton, this);
+			}
 		}
 	}
 	
@@ -130,11 +149,22 @@ int MyWindow::handle(int event)
 		x -= m_imageBox.x();
 		y -= m_imageBox.y();
 		
-		u32 s = static_cast<u32>(getPixelSize());
-		u32 offset = y * w * s + x * s;
+		// Take flipping ops into acount
+		if(m_flipV.value() != 0)
+		{
+			y = h - y;
+		}
+		if(m_flipH.value() != 0)
+		{
+			x = w - x;
+		}
+		
+		// Calculate offset in bytes
+		u32 ps = static_cast<u32>(getPixelSize());
+		u32 offset = y * w * ps + x * ps;
 		
 		memset(m_offsetText, 0, sizeof(m_offsetText));
-		itoa(m_accumOffset + offset, m_offsetText, 10);
+		snprintf(m_offsetText, sizeof(m_offsetText), "%s", intToString(m_accumOffset + offset));
 		m_offset.value(m_offsetText);
 	}
 	
@@ -326,9 +356,9 @@ bool MyWindow::updatePixelFormat(bool startup /* false */)
 			m_formatInfo.copy_label(buff);
 			m_formatGroup.color(FL_DARK1);
 			if(!startup)
-            {
-                flush();
-            }
+			{
+				flush();
+			}
 
 			return true;
 		}
@@ -336,11 +366,11 @@ bool MyWindow::updatePixelFormat(bool startup /* false */)
 	
 	m_formatGroup.color(FL_RED);
 	m_formatInfo.label("Invalid format");
-    m_formatInfo.redraw();
-    if(!startup)
-    {
-        flush();
-    }
+	m_formatInfo.redraw();
+	if(!startup)
+	{
+		flush();
+	}
 	
 	return false;
 }
@@ -557,6 +587,7 @@ void MyWindow::ButtonCallback(Fl_Widget* widget, void* param)
 	
 	MyWindow* p = static_cast<MyWindow*>(param);
 	char buff[128];
+	memset(buff, 0, sizeof(buff));
 	
 	if(widget == &p->m_saveButton)
 	{
@@ -573,92 +604,91 @@ void MyWindow::ButtonCallback(Fl_Widget* widget, void* param)
 	else if(widget == &p->m_openButton)
 	{
 		u32 offset = static_cast<u32>(std::max(atoi(p->m_offset.value()), 0));
-        Fl_Native_File_Chooser browser;
-        const char* filename = p->m_currentFile;
+		Fl_Native_File_Chooser browser;
+		const char* filename = p->m_currentFile;
 		
 		// Show file dialog only if we are not in auto-reload mode
-        if(p->m_autoReload.value() == 0)
-        {
-            snprintf(buff, sizeof(buff), "Open file from offset: %d Bytes", offset);
-            
-            browser.title(buff);
-            browser.type(Fl_Native_File_Chooser::BROWSE_FILE);
-            browser.filter("Any file\t*.*\n");
-            
-            if(browser.show() == 0)
-            {
-                filename = browser.filename();
-            }
-            else
-            {
-            	return;
-            }
-        }
-
-        if(filename && filename[0] != 0)
-        {
-            FILE* f = fopen(filename, "rb");
-            if(f)
-            {
-                fseek(f, 0, SEEK_END);
-                u32 size = static_cast<u32>(ftell(f));
-                fseek(f, 0, SEEK_SET);
-                
-                if(offset >= size)
-                {
-                	// If auto-reload is on do nothing when pointing out of bounds
-                	if(p->m_autoReload.value() != 0)
-                	{
-                		fclose(f);
-                		return;
-                	}
-                	
-                    fl_message("Offset %d larger then file size (%d Bytes). Reading from offset 0 instead.", offset, size);
-                    offset = 0;
-                    p->m_accumOffset = 0;
-                }
-                
-                // Reset accumulated offset if we opened a different file or changed it manually
-                if(strcmp(filename, p->m_currentFile) != 0)
-                {
-                    p->m_accumOffset = 0;
-                }
-                else
-                {
-                    if(p->m_offsetChanged)
-                    {
-                        p->m_accumOffset = 0;
-                        p->m_offsetChanged = false;
-                    }	
-                }
-                
-                size = std::min(size - offset, kMaxImageSize);
-                p->m_accumOffset = offset;
-                
-                memset(p->m_text, 0, kMaxBufferSize);
-                fseek(f, offset, SEEK_CUR);
-                fread(p->m_text, size, 1, f);
-                fclose(f);
-                
-                // Store current file for the accumulated offset
-                if(strcmp(filename, p->m_currentFile) != 0)
-                {
-                    memset(p->m_currentFile, 0, sizeof(p->m_currentFile));
-                    snprintf(p->m_currentFile, sizeof(p->m_currentFile), "%s", filename);
-                }
-                
-                // Set data and update image view
-                p->m_data.static_value(reinterpret_cast<char*>(p->m_text), size);
-                UpdateCallback(&p->m_data, param);
-                
-                // Move data cursor to data start
-                p->m_data.position(0, 0);
-
+		if(p->m_autoReload.value() == 0)
+		{
+			snprintf(buff, sizeof(buff), "Open file from offset: %d Bytes", offset);
+			
+			browser.title(buff);
+			browser.type(Fl_Native_File_Chooser::BROWSE_FILE);
+			browser.filter("Any file\t*.*\n");
+			
+			if(browser.show() == 0)
+			{
+				filename = browser.filename();
+			}
+			else
+			{
+				return;
+			}
+		}
+		
+		if(filename && filename[0] != 0)
+		{
+			FILE* f = fopen(filename, "rb");
+			if(f)
+			{
+			    fseek(f, 0, SEEK_END);
+			    u32 size = static_cast<u32>(ftell(f));
+			    fseek(f, 0, SEEK_SET);
+			    
+			    if(offset >= size)
+			    {
+					// If auto-reload is on do nothing when pointing out of bounds
+					if(p->m_autoReload.value() != 0)
+					{
+						fclose(f);
+						return;
+					}
+					
+					fl_message("Offset %d larger then file size (%d Bytes). Reading from offset 0 instead.", offset, size);
+					offset = 0;
+					p->m_accumOffset = 0;
+			    }
+			    
+			    // Reset accumulated offset if we opened a different file or changed it manually
+			    if(strcmp(filename, p->m_currentFile) != 0)
+			    {
+			        p->m_accumOffset = 0;
+			    }
+			    else
+			    {
+			        if(p->m_offsetChanged)
+			        {
+			            p->m_accumOffset = 0;
+			            p->m_offsetChanged = false;
+			        }	
+			    }
+			    
+			    size = std::min(size - offset, kMaxDim * kMaxDim * 3); // TODO: Change to kImageSzie
+			    p->m_accumOffset = offset;
+			    
+			    memset(p->m_text, 0, kMaxBufferSize);
+			    fseek(f, offset, SEEK_CUR);
+			    fread(p->m_text, size, 1, f);
+			    fclose(f);
+			    
+			    // Store current file for the accumulated offset
+			    if(strcmp(filename, p->m_currentFile) != 0)
+			    {
+			        memset(p->m_currentFile, 0, sizeof(p->m_currentFile));
+			        snprintf(p->m_currentFile, sizeof(p->m_currentFile), "%s", filename);
+			    }
+			    
+			    // Set data and update image view
+			    p->m_data.static_value(reinterpret_cast<char*>(p->m_text), size);
+			    UpdateCallback(&p->m_data, param);
+			    
+			    // Move data cursor to data start
+			    p->m_data.position(0, 0);
+			
 				// Assign new accumulation offset
-                char num[32];
-                p->m_offset.value(itoa(p->m_accumOffset, num, 10));
-            }
-        }
+				p->m_offset.value(intToString(p->m_accumOffset));
+			}
+		}
 	}
 	else if(widget == &p->m_aboutButton)
 	{
@@ -723,15 +753,13 @@ void MyWindow::DimCallback(Fl_Widget* widget, void* param)
 	int w = p->getImageWidth();
 	int h = p->getImageHeight();
 	if(w < 1 || w > kMaxDim || h < 1 || h > kMaxDim)
-	{ 
-		w = std::min(std::max(1, w), (int)kMaxDim);
-		h = std::min(std::max(1, h), (int)kMaxDim);
-		
-		char num[8];
-		p->m_width.value(itoa(w, num, 10));
-		p->m_height.value(itoa(h, num, 10));
+	{
+		w = clampValue(w, 1, (int)kMaxDim);
+		h = clampValue(h, 1, (int)kMaxDim);		
+		p->m_width.value(intToString(w));
+		p->m_height.value(intToString(h));
 	}
-	
+
 	if(p->updatePixelFormat())
 	{
 		UpdateCallback(widget, param);
@@ -745,7 +773,6 @@ void MyWindow::TileCallback(Fl_Widget* widget, void* param)
 		return;
 	}
 	MyWindow* p = static_cast<MyWindow*>(param);
-	char num[16];
 
 	if(widget == &p->m_tile)
 	{
@@ -769,8 +796,8 @@ void MyWindow::TileCallback(Fl_Widget* widget, void* param)
 
 		if(t < 1 || t > w)
 		{
-			t = std::min(std::max(t, 1), w);
-			p->m_tileX.value(itoa(t, num, 10));
+			t = clampValue(t, 1, w);
+			p->m_tileX.value(intToString(t));
 		}
 		
 		UpdateCallback(widget, param);
@@ -782,11 +809,33 @@ void MyWindow::TileCallback(Fl_Widget* widget, void* param)
 
 		if(t < 1 || t > h)
 		{
-			t = std::min(std::max(t, 1), h);
-			p->m_tileY.value(itoa(t, num, 10));
+			t = clampValue(t, 1, h);
+			p->m_tileY.value(intToString(t));
 		}
 		
 		UpdateCallback(widget, param);
+	}
+}
+
+void MyWindow::OpsCallback(Fl_Widget* widget, void* param)
+{
+	if(!param)
+	{
+		return;
+	}
+	MyWindow* p = static_cast<MyWindow*>(param);
+	
+	if(widget == &p->m_colorCount)
+	{
+		if(p->m_colorCount.value() == 0)
+		{
+			// Set back original label
+			p->m_colorCount.label("Count colors");
+		}
+		else
+		{
+			UpdateCallback(widget, param);
+		}
 	}
 }
 
@@ -816,6 +865,7 @@ void MyWindow::UpdateCallback(Fl_Widget* widget, void* param) // Callback to upd
 	
 	// Print byte count
 	char buff[64];
+	memset(buff, 0, sizeof(buff));
 	snprintf(buff, sizeof(buff), "%u/%u Bytes", length, kMaxBufferSize);
 	p->m_byteCount.copy_label(buff);
 
@@ -826,11 +876,69 @@ void MyWindow::UpdateCallback(Fl_Widget* widget, void* param) // Callback to upd
 	
 	// Wipe old data
 	u32 size = u32(w) * u32(h) * 3;
+	u32 stride = u32(w) * 3;
 	memset(p->m_pixels, 0, size);
 	
 	// Convert new data
 	length = std::min(size, length);
 	p->convertData(text, p->m_pixels, length, u32(tx), u32(ty));
+	
+	// See if we have other ops to perform on the data (we could combine some of them to save time but maybe later):
+	// Vertical flip ?
+	if(p->m_flipV.value() != 0)
+	{
+		for(u32 y=0; y<u32(h/2); ++y)
+		{
+			u8* src = p->m_pixels + y * stride;
+			u8* dest = p->m_pixels + (u32(h) - y - 1) * stride;
+			
+			for(u32 x=0; x<u32(w); ++x, src+=3, dest+=3)
+			{
+				std::swap(src[0], dest[0]);
+				std::swap(src[1], dest[1]);
+				std::swap(src[2], dest[2]);
+			}
+		}
+	}
+	
+	// Horizontal flip ?
+	if(p->m_flipH.value() != 0)
+	{
+		for(u32 y=0; y<u32(h); ++y)
+		{
+			u8* line = p->m_pixels + y * stride;
+			
+			for(u32 x=0; x<u32(w/2); ++x)
+			{
+				u32 rx = u32(w - 1) - x;
+				
+				std::swap(line[x*3+0], line[rx*3+0]);
+				std::swap(line[x*3+1], line[rx*3+1]);
+				std::swap(line[x*3+2], line[rx*3+2]);
+			}
+		}
+	}
+	
+	// Count colors ?
+	if(p->m_colorCount.value() != 0)
+	{
+		std::set<u32> colors;
+		
+		for(u32 y=0; y<u32(h); ++y)
+		{
+			u8* line = p->m_pixels + y * stride;
+			
+			for(u32 x=0; x<u32(w); ++x, line+=3)
+			{
+				u32 color = line[0] | (line[1] << 8) | (line[2] << 16);
+				colors.insert(color);
+			}
+		}
+	
+		memset(buff, 0, sizeof(buff));
+		snprintf(buff, sizeof(buff), "Colors: %u", colors.size());
+		p->m_colorCount.copy_label(buff);
+	}
 	
 	// Show new image
 	if(p->m_image)

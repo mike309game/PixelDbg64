@@ -1,6 +1,6 @@
 /***************************************************************************
  *                                                                         *
- *   Copyright (C) 2013 Nikita Kindt (n.kindt.pdbg@gmail.com)    		   *
+ *   Copyright (C) 2013 Nikita Kindt (n.kindt.pdbg@gmail.com)              *
  *                                                                         *
  *   File is part of PixelDbg:                                             *
  *   https://sourceforge.net/projects/pixeldbg/                            *
@@ -26,6 +26,7 @@
 #define __MAIN_H
 
 #include <iostream>
+#include <set>
 #include <FL/Fl.H>
 #include <FL/Fl_Double_Window.H>
 #include <FL/Fl_Box.H>
@@ -52,18 +53,18 @@ typedef unsigned int u32;
 #pragma pack(1)
 struct TgaHeader
 {
-	u8 identsize;	    // Size of id field that follows 18 byte header (0 usually)
-	u8 colormaptype;    // Type of color map 0 = none, 1 = has palette
-	u8 imagetype;       // Type of image 0 = none,1 = indexed,2 = rgb,3 = grey, +8 = rle packed
-	u16 palletestart;   // First color map entry in palette
-	u16 palettelength;  // Number of colors in palette
-	u8 palettebits;     // Number of bits per palette entry 15,16,24,32
-	u16 xstart;         // Image x origin
-	u16 ystart;         // Image y origin
-	u16 width;          // Image width
-	u16 height;         // Image height
+	u8 identsize;		// Size of id field that follows 18 byte header (0 usually)
+	u8 colormaptype;	// Type of color map 0 = none, 1 = has palette
+	u8 imagetype;		// Type of image 0 = none,1 = indexed,2 = rgb,3 = grey, +8 = rle packed
+	u16 palletestart;	// First color map entry in palette
+	u16 palettelength;	// Number of colors in palette
+	u8 palettebits;		// Number of bits per palette entry 15,16,24,32
+	u16 xstart;			// Image x origin
+	u16 ystart;			// Image y origin
+	u16 width;			// Image width
+	u16 height;			// Image height
 	u8 bpp;				// Image bit depth
-	u8 descriptor;      // Image descriptor bits (vh flip bits)
+	u8 descriptor;		// Image descriptor bits (vh flip bits)
 };
 #pragma pack(pop)
 
@@ -84,47 +85,52 @@ public:
 	static const u32 kMaxDim = 1024;
 	static const u32 kMaxBufferSize = kMaxDim * kMaxDim * 4;
 	static const u32 kMaxImageSize = kMaxDim * kMaxDim * 3;
-	static const float kVersion = 0.5f;
+	static const float kVersion = 0.6f;
 	
 	MyWindow(const char* text) :
 		Fl_Double_Window(855, 515, text),
 		m_dimGroup(5, 2, 195, 90),
 		m_fileGroup(5, 95, 195, 80),
 		m_formatGroup(5, 178, 195, 106),
+        m_opsGroup(5, 287, 195, 65),
 		m_width(120, 5, 70, 20, "Width [1, 1024]:"),
 		m_height(120, 27, 70, 20, "Height [1, 1024]:"),
 		m_data(60, 49, 130, 22, "Data:"),
+		m_byteCount(5, 70, 200, 22),
 		m_offset(110, 145, 80, 22, "Offset:"),
 		m_saveButton(15, 100, 90, 40, "Save image"),
 		m_openButton(110, 100, 80, 40, "Open file"),
-		m_autoReload(11, 145, 20, 22, "Auto"),
+		m_autoReload(11, 145, 50, 22, "Auto"),
 		m_redChannel(30, 182, 24, 20, "R:"),
 		m_greenChannel(75, 182, 24, 20, "G:"),
 		m_blueChannel(120, 182, 24, 20, "B:"),
 		m_alphaChannel(165, 182, 24, 20, "A:"),
 		m_rgbaBits(85, 205, 105, 20, "RGBA bits:"),
+		m_formatInfo(10, 230, 180, 22),
 		m_tile(11, 257, 47, 20, "Tile"),
 		m_tileX(78, 257, 45, 20, "X:"),
 		m_tileY(145, 257, 45, 20, "Y:"),
-		m_byteCount(5, 70, 200, 22),
-		m_formatInfo(10, 230, 180, 22),
+		m_flipV(11, 291, 185, 20, "Flip vertically"),
+		m_flipH(11, 309, 185, 20, "Flip horizontally"),
+		m_colorCount(11, 327, 185, 20, "Count colors"),
 		m_imageBox(210, 2, 0, 0),
-		m_mouseBox(5, 300, 190, 20),
-		m_aboutButton(5, 288, 195, 23, "About"),
+		m_aboutButton(5, 357, 195, 23, "About"),
 		m_windowSize(this->w(), this->h()),
 		m_cursorChanged(false),
 		m_accumOffset(0),
 		m_offsetChanged(false)
 	{	
-		// Limit window size on resize (1x282 as minimum image)
-		size_range(216, 285, 1239, 1045);
+		// Limit window size on resize (1x352 as minimum image)
+		size_range(216, 355, 1239, 1045);
 		
 		m_dimGroup.box(FL_ENGRAVED_BOX);
-        m_dimGroup.color(FL_DARK1);
-        m_fileGroup.box(FL_ENGRAVED_BOX);
-        m_fileGroup.color(FL_DARK1);
-        m_formatGroup.box(FL_ENGRAVED_BOX);
-        m_formatGroup.color(FL_DARK1);
+		m_dimGroup.color(FL_DARK1);
+		m_fileGroup.box(FL_ENGRAVED_BOX);
+		m_fileGroup.color(FL_DARK1);
+		m_formatGroup.box(FL_ENGRAVED_BOX);
+		m_formatGroup.color(FL_DARK1);
+		m_opsGroup.box(FL_ENGRAVED_BOX);
+		m_opsGroup.color(FL_DARK1);
 		
 		m_width.maximum_size(4);
 		m_width.insert("640");
@@ -151,6 +157,10 @@ public:
 		m_data.callback(UpdateCallback, this);
 		m_data.tooltip("Data that is displayed as the actual image. Different data can be inserted or deleted here like normal text.");
 		
+		char buff[64];
+		snprintf(buff, sizeof(buff), "0/%u Bytes", kMaxDim * kMaxDim * 4);
+		m_byteCount.copy_label(buff);
+		
 		m_offset.maximum_size(10);
 		m_offset.insert("0");
 		m_offset.type(FL_INT_INPUT);
@@ -159,7 +169,7 @@ public:
 		m_offset.callback(OffsetCallback, this);
 		m_offset.tooltip("File offset to read from when opening file. Offset can be picked from the image by holding CTRL. "
                          "File offset is not adjusted automatically if data is inserted or deleted manually in Data editbox!");
-		
+
 		m_saveButton.box(FL_THIN_UP_BOX);
 		m_saveButton.when(FL_WHEN_RELEASE);
 		m_saveButton.callback(ButtonCallback, this);
@@ -241,17 +251,25 @@ public:
 		m_tileY.callback(TileCallback, this);
 		m_tileY.tooltip("Tile image in Y. Number of tiles is calculated as (height / tileY).");
 		
-		char buff[64];
-		snprintf(buff, sizeof(buff), "0/%u Bytes", kMaxDim * kMaxDim * 4);
-		m_byteCount.copy_label(buff);
+		m_flipV.when(FL_WHEN_CHANGED);
+		m_flipV.down_box(FL_DIAMOND_DOWN_BOX);
+		m_flipV.callback(UpdateCallback, this);
+		m_flipV.tooltip("If checked, flip vertically on each redraw.");
 		
-		m_mouseBox.labelfont(FL_COURIER);
-		m_mouseBox.labelsize(11);
+		m_flipH.when(FL_WHEN_CHANGED);
+		m_flipH.down_box(FL_DIAMOND_DOWN_BOX);
+		m_flipH.callback(UpdateCallback, this);
+		m_flipH.tooltip("If checked, flip horizontally on each redraw.");
+		
+		m_colorCount.when(FL_WHEN_CHANGED);
+		m_colorCount.down_box(FL_DIAMOND_DOWN_BOX);
+		m_colorCount.callback(OpsCallback, this);
+		m_colorCount.tooltip("If checked, count unique colors every time the image changes.");
 		
 		m_aboutButton.box(FL_THIN_UP_BOX);
 		m_aboutButton.when(FL_WHEN_RELEASE);
 		m_aboutButton.callback(ButtonCallback, this);
-
+		
 		m_pixels = new u8[kMaxDim * kMaxDim * 3]; // BGR as pixels in window
 		m_text = new char[kMaxDim * kMaxDim * 4]; // BGRA as text in editbox
 		m_image = 0;
@@ -283,19 +301,17 @@ public:
 	// Inline
 	bool isValid() const
 	{
-		return m_fileGroup.color() != FL_RED;
+		return m_formatGroup.color() != FL_RED;
 	}
 	
 	int getImageWidth() const
 	{
-		int i = atoi(m_width.value());
-		return i;
+		return atoi(m_width.value());
 	}
 	
 	int getImageHeight() const
 	{
-		int i = atoi(m_height.value());
-		return i;
+		return atoi(m_height.value());
 	}
 	
 	int getOffset() const
@@ -309,15 +325,18 @@ private:
 	static void ChannelCallback(Fl_Widget* widget, void* param);
 	static void DimCallback(Fl_Widget* widget, void* param);
 	static void TileCallback(Fl_Widget* widget, void* param);
+	static void OpsCallback(Fl_Widget* widget, void* param);
 	static void UpdateCallback(Fl_Widget* widget, void* param);
 
 public:
 	Fl_Box m_dimGroup;
 	Fl_Box m_fileGroup;
 	Fl_Box m_formatGroup;
+    Fl_Box m_opsGroup;
 	Fl_Input m_width;
 	Fl_Input m_height;
 	Fl_Input m_data;
+	Fl_Box m_byteCount;
 	Fl_Input m_offset;
 	Fl_Button m_saveButton;
 	Fl_Button m_openButton;
@@ -327,13 +346,14 @@ public:
 	Fl_Input m_blueChannel;
 	Fl_Input m_alphaChannel;
 	Fl_Input m_rgbaBits;
+	Fl_Box m_formatInfo;
 	Fl_Check_Button m_tile;
 	Fl_Input m_tileX;
 	Fl_Input m_tileY;
-	Fl_Box m_byteCount;
-	Fl_Box m_formatInfo;
+	Fl_Check_Button m_flipV;
+	Fl_Check_Button m_flipH;
+	Fl_Check_Button m_colorCount;
 	Fl_Box m_imageBox;
-	Fl_Box m_mouseBox;
 	Fl_Button m_aboutButton;
 	Fl_RGB_Image* m_image;
 	
@@ -344,8 +364,9 @@ public:
 	u32 m_accumOffset;
 	bool m_offsetChanged;
 	char m_offsetText[32]; // To avoid memory allocs
-	char m_currentFile[256];
+	char m_currentFile[260];
 	char m_rawMemoryFlRGBImage[sizeof(Fl_RGB_Image)];
 };
 
 #endif
+
