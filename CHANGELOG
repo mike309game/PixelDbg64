@@ -1,4 +1,4 @@
-11th  Novemebr 2013 (PixelDbg 0.67)
+11th  November 2013 (PixelDbg 0.67)
 
 + Palette colors are now adjustable via channel order in pixel format group
 + If palette is loaded from tga/bmp files the header is skipped (raw pixels are used as palette entries)
@@ -7,14 +7,14 @@
 * Fixed occassional crash with invalid addressing of channels under certain circumstances
 
 
-10th Novemebr 2013 (PixelDbg 0.65)
+10th November 2013 (PixelDbg 0.65)
 
 + Added palette mode
 * Fixed size limit in RGBA mode when converting to new pixels
 
 
 
-9th Novemebr 2013 (PixelDbg 0.6)
+9th November 2013 (PixelDbg 0.6)
 
 + Added horizontal and vertical flipping ops on displayed image
 + Added ability to count displayed colors
