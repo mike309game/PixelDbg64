@@ -85,7 +85,7 @@ public:
 	static const u32 kMaxDim = 1024;
 	static const u32 kMaxBufferSize = kMaxDim * kMaxDim * 4;
 	static const u32 kMaxImageSize = kMaxDim * kMaxDim * 3;
-	static const float kVersion = 0.65f;
+	static const float kVersion = 0.67f;
 	
 	MyWindow(const char* text) :
 		Fl_Double_Window(855, 515, text),
@@ -296,16 +296,17 @@ public:
 		m_loadPalette.when(FL_WHEN_RELEASE);
 		m_loadPalette.callback(PaletteCallback, this);
 		m_loadPalette.deactivate();
+		m_loadPalette.tooltip("Open any file as palette (first 768 bytes). If file type is tga or bmp, the actual pixels are used as palette colors and file header is ignored.");
 		
 		m_flipV.when(FL_WHEN_CHANGED);
 		m_flipV.down_box(FL_DIAMOND_DOWN_BOX);
 		m_flipV.callback(UpdateCallback, this);
-		m_flipV.tooltip("If checked, flip vertically on each redraw.");
+		m_flipV.tooltip("If checked, flip vertically on each redraw. Top/left image origin will be located at bottom/left instead (affects picking mode).");
 		
 		m_flipH.when(FL_WHEN_CHANGED);
 		m_flipH.down_box(FL_DIAMOND_DOWN_BOX);
 		m_flipH.callback(UpdateCallback, this);
-		m_flipH.tooltip("If checked, flip horizontally on each redraw.");
+		m_flipH.tooltip("If checked, flip horizontally on each redraw. Top/left image origin will be located at top/right instead (affects picking mode).");
 		
 		m_colorCount.when(FL_WHEN_CHANGED);
 		m_colorCount.down_box(FL_DIAMOND_DOWN_BOX);
@@ -323,7 +324,7 @@ public:
 		// Show current pixel format
 		updatePixelFormat(true);
 		
-		// Fixed seed on purpose. Every random palette is reproduceable!
+		// Fixed seed on purpose. I.e. every random palette is reproduceable!
 		srand(213123);
 	}
 	
@@ -336,31 +337,40 @@ public:
 	virtual void draw();
 	virtual int handle(int event);
 
+	bool isFormatValid() const;
 	int getRedBits() const;
 	int getGreenBits() const;
 	int getBlueBits() const;
 	int getAlphaBits() const;
 	bool getPixelFormat(int bitMask[4], int rgbaChannels[4], int rgbaBits[4], int& pixelSize) const;
+	bool getRGBABits(int rgbaBits[4]);
 	int getPixelSize() const;
 	bool updatePixelFormat(bool startup = false);
-	void convertData(const u8* data, u8* rgbOut, u32 size, u32 tileX, u32 tileY, u8* palette = NULL);
+	void convertData(const u8* data, u32 size, u8* rgbOut, u32 tileX, u32 tileY, u8* palette = NULL);
 	bool writeBitmap(const char* filename);
 	bool writeTga(const char* filename);
 	
 	// Inline
+	bool isDimValid() const
+	{
+		return getImageWidth() != -1 && getImageHeight() != -1;
+	}
+	
 	bool isValid() const
 	{
-		return m_formatGroup.color() != FL_RED;
+		return isDimValid() && isFormatValid();
 	}
 	
 	int getImageWidth() const
 	{
-		return atoi(m_width.value());
+		const char* value = m_width.value();
+		return value && value[0] != 0 ? atoi(value) : -1;
 	}
 	
 	int getImageHeight() const
 	{
-		return atoi(m_height.value());
+		const char* value = m_height.value();
+		return value && value[0] != 0 ? atoi(value) : -1;
 	}
 	
 	int getOffset() const
@@ -423,6 +433,7 @@ public:
 	char m_currentFile[260];
 	char m_rawMemoryFlRGBImage[sizeof(Fl_RGB_Image)];
 	u8 m_palette[256 * 3];
+	std::set<u32> m_colorSet;
 };
 
 #endif

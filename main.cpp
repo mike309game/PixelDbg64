@@ -74,21 +74,24 @@ void MyWindow::draw()
 	if(m_windowSize.x != w || m_windowSize.y != h)
 	{
 		// Resize happend (adjust dimension fields)
-		int imagew = getImageWidth();
-		int imageh = getImageHeight();
-		int deltaw = w - m_windowSize.x;
-		int deltah = h - m_windowSize.y;
-		m_windowSize.set(w, h);
+		if(isDimValid())
+		{
+			int imagew = getImageWidth();
+			int imageh = getImageHeight();
+			int deltaw = w - m_windowSize.x;
+			int deltah = h - m_windowSize.y;
+			m_windowSize.set(w, h);
+			
+			imagew = clampValue(imagew + deltaw, 1, (int)kMaxDim);
+			m_width.value(intToString(imagew));
+			
+			imageh = clampValue(imageh + deltah, 1, (int)kMaxDim);
+			m_height.value(intToString(imageh));
 		
-		imagew = clampValue(imagew + deltaw, 1, (int)kMaxDim);
-		m_width.value(intToString(imagew));
-		
-		imageh = clampValue(imageh + deltah, 1, (int)kMaxDim);
-		m_height.value(intToString(imageh));
-		
-		// Redraw image
-		// Note: Passing <this> for widget indicates that we currently resize the window and can't flush!
-		UpdateCallback(this, this);
+			// Redraw image
+			// Note: Passing <this> for widget indicates that we currently resize the window and can't flush!
+			UpdateCallback(this, this);
+		}
 	}
 	
 	Fl_Double_Window::draw();
@@ -103,7 +106,7 @@ int MyWindow::handle(int event)
 	if(Fl::event_state() == FL_CTRL)
 	{
 		// Check if we have a valid image
-		if(m_imageBox.w() > 0 && m_imageBox.h() > 0)
+		if(m_imageBox.w() > 0 && m_imageBox.h() > 0 && isDimValid())
 		{
 			w = static_cast<u32>(getImageWidth());
 			h = static_cast<u32>(getImageHeight());
@@ -174,6 +177,16 @@ int MyWindow::handle(int event)
 	}
 	
 	return Fl_Double_Window::handle(event);
+}
+
+bool MyWindow::isFormatValid() const
+{
+	int bitMask[4];
+	int rgbaChannels[4];
+	int rgbaBits[4];
+	int pixelSize;
+	
+	return getPixelFormat(bitMask, rgbaChannels, rgbaBits, pixelSize);
 }
 
 int MyWindow::getRedBits() const
@@ -279,9 +292,11 @@ bool MyWindow::getPixelFormat(int bitMask[4], int rgbaChannels[4], int rgbaBits[
 	rgbaChannels[2] = atoi(m_blueChannel.value()) - 1;
 	rgbaChannels[3] = atoi(m_alphaChannel.value()) - 1;
 	
+	bitMask[0] = bitMask[1] = bitMask[2] = bitMask[3] = 0;
+	
 	for(int i=0; i<4; ++i)
 	{
-		if(rgbaChannels[i] < 0 && rgbaBits[i] != 0)
+		if(rgbaChannels[i] == -1)
 		{
 			return false;
 		}
@@ -299,17 +314,31 @@ bool MyWindow::getPixelFormat(int bitMask[4], int rgbaChannels[4], int rgbaBits[
 				return false;
 			}
 		}
+		
+		if(rgbaChannels[i] >= 0)
+		{
+			bitMask[rgbaChannels[i]] = ~(((u32)-1) << rgbaBits[i]);
+		}
 	}
-	
-	bitMask[rgbaChannels[0]] = ~(((u32)-1) << rgbaBits[0]);
-	bitMask[rgbaChannels[1]] = ~(((u32)-1) << rgbaBits[1]);
-	bitMask[rgbaChannels[2]] = ~(((u32)-1) << rgbaBits[2]);
-	bitMask[rgbaChannels[3]] = ~(((u32)-1) << rgbaBits[3]);
 	
 	int bpp = rgbaBits[0] + rgbaBits[1] + rgbaBits[2] + rgbaBits[3];
 	pixelSize = bpp / 8;
 
 	return pixelSize != 0 && (bpp % 8) == 0 && bpp <= 32;
+}
+
+bool MyWindow::getRGBABits(int rgbaBits[4])
+{
+	int bitMask[4];
+	int rgbaChannels[4];
+	int pixelSize;
+
+	if(getPixelFormat(bitMask, rgbaChannels, rgbaBits, pixelSize))
+	{
+		return true;
+	}
+	
+	return false;
 }
 
 int MyWindow::getPixelSize() const
@@ -355,39 +384,33 @@ bool MyWindow::updatePixelFormat(bool startup /* false */)
 			int a = rgbaChannels[3];
 			
 			char buff[64];
+			memset(buff, 0, sizeof(buff));
 			snprintf(buff, sizeof(buff), "%d bpp - %.2X %.2X %.2X %.2X",
 				pixelSize * 8, bitMask[r], bitMask[g], bitMask[b], bitMask[a]);
-						
+			
 			m_formatInfo.copy_label(buff);
 			m_formatGroup.color(FL_DARK1);
-			if(!startup)
-			{
-				flush();
-			}
+			this->redraw();
 
 			return true;
 		}
 	}
 	
-	m_formatGroup.color(FL_RED);
 	m_formatInfo.label("Invalid format");
-	m_formatInfo.redraw();
-	if(!startup)
-	{
-		flush();
-	}
+	m_formatGroup.color(FL_RED);
+	this->redraw();
 	
 	return false;
 }
 
-void MyWindow::convertData(const u8* data, u8* rgbOut, u32 size, u32 tileX, u32 tileY, u8* palette /* NULL */)
-{
+void MyWindow::convertData(const u8* data, u32 size, u8* rgbOut, u32 tileX, u32 tileY, u8* palette /* NULL */)
+{	
 	int bitMask[4];
 	int rgbaChannels[4];
 	int rgbaBits[4];
 	int ps;
 	
-	if(!getPixelFormat(bitMask, rgbaChannels, rgbaBits, ps))
+	if(!isValid() || !getPixelFormat(bitMask, rgbaChannels, rgbaBits, ps))
 	{
 		return;
 	}
@@ -429,10 +452,16 @@ void MyWindow::convertData(const u8* data, u8* rgbOut, u32 size, u32 tileX, u32 
 			u32 bx = tx * tileX;
 			
 			for(u32 y=0; y<tileY; ++y)
-			{				
+			{
 				for(u32 x=0; x<tileX; ++x, dest+=3, ++pixels)
-				{				
+				{
 					u32 i = (by + y) * stride + (bx + x) * ps;
+					
+					// Make sure we don't read more data then is given
+					if(i >= size)
+					{
+						return;
+					}
 				
 					// Read pixel byte-wise
 					u32 pixel = 0;
@@ -481,7 +510,7 @@ void MyWindow::convertData(const u8* data, u8* rgbOut, u32 size, u32 tileX, u32 
 					
 					if(pixels >= totalPixels)
 					{
-						break;
+						return;
 					}
 					
 					// Check for alpha-only mode explictly and replicate alpha in all channels or use palette
@@ -490,9 +519,9 @@ void MyWindow::convertData(const u8* data, u8* rgbOut, u32 size, u32 tileX, u32 
 						if(palette)
 						{
 							// Palette mode
-							rgbOut[dest+0] = palette[pixel+0];
-							rgbOut[dest+1] = palette[pixel+1];
-							rgbOut[dest+2] = palette[pixel+2];
+							rgbOut[dest+0] = palette[pixel * 3 + rgbaChannels[0]];
+							rgbOut[dest+1] = palette[pixel * 3 + rgbaChannels[1]];
+							rgbOut[dest+2] = palette[pixel * 3 + rgbaChannels[2]];
 						}
 						else
 						{
@@ -602,7 +631,7 @@ void MyWindow::ButtonCallback(Fl_Widget* widget, void* param)
 	char buff[128];
 	memset(buff, 0, sizeof(buff));
 	
-	if(widget == &p->m_saveButton)
+	if(widget == &p->m_saveButton && p->isDimValid())
 	{
 		int w = p->getImageWidth();
 		int h = p->getImageHeight();
@@ -747,8 +776,24 @@ void MyWindow::ChannelCallback(Fl_Widget* widget, void* param)
 	}
 	
 	MyWindow* p = static_cast<MyWindow*>(param);
-			
-	if(p->updatePixelFormat())
+	
+	// Make sure we have a valid channel range
+	if(widget == &p->m_redChannel || widget == &p->m_greenChannel ||
+	   widget == &p->m_blueChannel || widget == &p->m_alphaChannel)
+	{
+		const char* value = ((Fl_Input*)widget)->value();
+		if(value && value[0] != 0)
+		{
+			int i = atoi(value);
+			if(i < 1 || i > 4)
+			{
+				i = clampValue(i, 1, 4);
+				((Fl_Input*)widget)->value(intToString(i));
+			}
+		}
+	}
+	
+	if(p->updatePixelFormat() && p->isValid())
 	{
 		UpdateCallback(widget, param);
 	}
@@ -764,18 +809,41 @@ void MyWindow::DimCallback(Fl_Widget* widget, void* param)
 	MyWindow* p = static_cast<MyWindow*>(param);
     
 	int w = p->getImageWidth();
-	int h = p->getImageHeight();
-	if(w < 1 || w > kMaxDim || h < 1 || h > kMaxDim)
+	if(w != -1)
 	{
-		w = clampValue(w, 1, (int)kMaxDim);
-		h = clampValue(h, 1, (int)kMaxDim);		
-		p->m_width.value(intToString(w));
-		p->m_height.value(intToString(h));
+		int maxw = p->w() - p->m_imageBox.x() - 5;
+		if(w < 1 || w > maxw)
+		{
+			w = clampValue(w, 1, maxw);
+			p->m_width.value(intToString(w));
+		}
+	}
+	
+	int h = p->getImageHeight();
+	if(h != -1)
+	{
+		int maxh = p->h() - p->m_imageBox.y();
+		if(h < 1 || h > maxh)
+		{
+			h = clampValue(h, 1, maxh);
+			p->m_height.value(intToString(h));
+		}
 	}
 
-	if(p->updatePixelFormat())
+	if(w != -1 && h != -1)
 	{
-		UpdateCallback(widget, param);
+		p->m_dimGroup.color(FL_DARK1);
+		p->redraw();
+
+		if(p->updatePixelFormat())
+		{
+			UpdateCallback(widget, param);
+		}
+	}
+	else
+	{
+		p->m_dimGroup.color(FL_RED);
+		p->redraw();
 	}
 }
 
@@ -802,7 +870,7 @@ void MyWindow::TileCallback(Fl_Widget* widget, void* param)
 		
 		UpdateCallback(widget, param);
 	}
-	else if(widget == &p->m_tileX)
+	else if(widget == &p->m_tileX && p->isDimValid())
 	{
 		int w = p->getImageWidth();
 		int t = atoi(p->m_tileX.value());
@@ -815,7 +883,7 @@ void MyWindow::TileCallback(Fl_Widget* widget, void* param)
 		
 		UpdateCallback(widget, param);
 	}
-	else if(widget == &p->m_tileY)
+	else if(widget == &p->m_tileY && p->isDimValid())
 	{
 		int h = p->getImageHeight();
 		int t = atoi(p->m_tileY.value());
@@ -846,6 +914,7 @@ void MyWindow::PaletteCallback(Fl_Widget* widget, void* param)
 			p->m_paletteMin.deactivate();
 			p->m_paletteMax.deactivate();
 			p->m_loadPalette.deactivate();
+			p->m_rgbaBits.activate();
 		}
 		else
 		{
@@ -857,6 +926,7 @@ void MyWindow::PaletteCallback(Fl_Widget* widget, void* param)
 			// Turn on 8 bpp pixel format
 			p->m_rgbaBits.value("0.0.0.8");
 			p->updatePixelFormat();
+			p->m_rgbaBits.deactivate();
 		}
 		
 		UpdateCallback(widget, param);
@@ -913,11 +983,36 @@ void MyWindow::PaletteCallback(Fl_Widget* widget, void* param)
 			FILE* f = fopen(filename, "rb");
 			if(f)
 			{
+				u32 skipBytes = 0;
+				const char* dot = strrchr(filename, '.');
+				if(dot)
+				{
+					u32 len = strlen(dot);
+					if(len < 5)
+					{
+						char ext[8];
+						strcpy(ext, dot);
+						for(u32 j=1; j<len; ++j)
+						{
+							ext[j] = tolower(ext[j]);
+						}
+					
+						if(strstr(ext, ".bmp") == ext)
+						{
+							skipBytes = 54;
+						}
+						else if(strstr(ext, ".tga") == ext)
+						{
+							skipBytes = 12;
+						}
+					}
+				}
+				
 				fseek(f, 0, SEEK_END);
 			    u32 size = static_cast<u32>(ftell(f));
-			    fseek(f, 0, SEEK_SET);
+			    fseek(f, skipBytes, SEEK_SET);
 			    
-			    size = clampValue<u32>(size, 0, sizeof(p->m_palette));
+			    size = clampValue<u32>(size - skipBytes, 0, sizeof(p->m_palette));
 			    fread(p->m_palette, size, 1, f);	
 				fclose(f);
 				
@@ -992,9 +1087,12 @@ void MyWindow::UpdateCallback(Fl_Widget* widget, void* param) // Callback to upd
 	// Convert new data
 	bool paletteMode = p->m_paletteMode.value() != 0;
 	length = std::min(size, length);
-	p->convertData(text, p->m_pixels, length, u32(tx), u32(ty), paletteMode ? p->m_palette : NULL);
+	p->convertData(text, length, p->m_pixels, u32(tx), u32(ty), paletteMode ? p->m_palette : NULL);
 	
+	//
 	// See if we have other ops to perform on the data (we could combine some of them to save time but maybe later):
+	//
+
 	// Vertical flip ?
 	if(p->m_flipV.value() != 0)
 	{
@@ -1033,8 +1131,6 @@ void MyWindow::UpdateCallback(Fl_Widget* widget, void* param) // Callback to upd
 	// Count colors ?
 	if(p->m_colorCount.value() != 0)
 	{
-		std::set<u32> colors;
-		
 		for(u32 y=0; y<u32(h); ++y)
 		{
 			u8* line = p->m_pixels + y * stride;
@@ -1042,13 +1138,14 @@ void MyWindow::UpdateCallback(Fl_Widget* widget, void* param) // Callback to upd
 			for(u32 x=0; x<u32(w); ++x, line+=3)
 			{
 				u32 color = line[0] | (line[1] << 8) | (line[2] << 16);
-				colors.insert(color);
+				p->m_colorSet.insert(color);
 			}
 		}
 	
 		memset(buff, 0, sizeof(buff));
-		snprintf(buff, sizeof(buff), "Colors: %u", colors.size());
+		snprintf(buff, sizeof(buff), "Colors: %u", p->m_colorSet.size());
 		p->m_colorCount.copy_label(buff);
+		p->m_colorSet.clear();
 	}
 	
 	// Show new image
