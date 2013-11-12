@@ -32,6 +32,7 @@
 #include <FL/Fl_Box.H>
 #include <FL/Fl_Input.H>
 #include <FL/Fl_Input_Choice.H>
+#include <FL/Fl_Choice.H>
 #include <FL/Fl_Button.H>
 #include <FL/Fl_Check_Button.H>
 #include <FL/Fl_BMP_Image.H>
@@ -85,7 +86,7 @@ public:
 	static const u32 kMaxDim = 1024;
 	static const u32 kMaxBufferSize = kMaxDim * kMaxDim * 4;
 	static const u32 kMaxImageSize = kMaxDim * kMaxDim * 3;
-	static const float kVersion = 0.67f;
+	static const float kVersion = 0.7f;
 	
 	MyWindow(const char* text) :
 		Fl_Double_Window(855, 515, text),
@@ -93,7 +94,7 @@ public:
 		m_fileGroup(5, 95, 195, 80),
 		m_formatGroup(5, 178, 195, 106),
 		m_paletteGroup(5, 287, 195, 87),
-		m_opsGroup(5, 377, 195, 65),
+		m_opsGroup(5, 377, 195, 85),
 		m_width(120, 5, 70, 20, "Width [1, 1024]:"),
 		m_height(120, 27, 70, 20, "Height [1, 1024]:"),
 		m_data(60, 49, 130, 22, "Data:"),
@@ -116,11 +117,13 @@ public:
 		m_paletteMin(47, 317, 45, 20, "Min.:"),
 		m_paletteMax(145, 317, 45, 20, "Max.:"),
 		m_loadPalette(15, 342, 175, 25, "Load palette from file"),
-		m_flipV(11, 381, 185, 20, "Flip vertically"),
-		m_flipH(11, 399, 185, 20, "Flip horizontally"),
-		m_colorCount(11, 417, 185, 20, "Count colors"),
+		m_DXTStream(11, 381, 100, 20, "Interpret as: "),
+		m_DXT(113, 381, 75, 20),
+		m_flipV(11, 399, 185, 20, "Flip vertically"),
+		m_flipH(11, 417, 185, 20, "Flip horizontally"),
+		m_colorCount(11, 435, 185, 20, "Count colors"),
 		m_imageBox(210, 2, 0, 0),
-		m_aboutButton(5, 447, 195, 23, "About"),
+		m_aboutButton(5, 467, 195, 23, "About"),
 		m_windowSize(this->w(), this->h()),
 		m_cursorChanged(false),
 		m_accumOffset(0),
@@ -262,7 +265,7 @@ public:
 		m_paletteMode.when(FL_WHEN_CHANGED);
 		m_paletteMode.down_box(FL_DIAMOND_DOWN_BOX);
 		m_paletteMode.callback(UpdateCallback, this);
-		m_paletteMode.tooltip("If checked, use randomized palette to display image.");
+		m_paletteMode.tooltip("If checked, use palette to display image.");
 		
 		m_paletteMode.when(FL_WHEN_CHANGED);
 		m_paletteMode.callback(PaletteCallback, this);
@@ -298,6 +301,21 @@ public:
 		m_loadPalette.deactivate();
 		m_loadPalette.tooltip("Open any file as palette (first 768 bytes). If file type is tga or bmp, the actual pixels are used as palette colors and file header is ignored.");
 		
+		m_DXTStream.when(FL_WHEN_CHANGED);
+		m_DXTStream.down_box(FL_DIAMOND_DOWN_BOX);
+		m_DXTStream.callback(DXTCallback, this);
+		m_DXTStream.tooltip("If checked, interpret data stream as selected S3TC DXT variant. RGBA bits can be either 5.6.5.0 or 5.5.5.1, other RGBA bits are ignored.");
+		
+		m_DXT.textfont(FL_COURIER);
+		m_DXT.textsize(12);
+		m_DXT.add("DXT1");
+		m_DXT.add("DXT3");
+		m_DXT.add("DXT5");
+		m_DXT.value(0);
+		m_DXT.when(FL_WHEN_CHANGED);
+		m_DXT.callback(DXTCallback, this);
+		m_DXT.deactivate();
+		
 		m_flipV.when(FL_WHEN_CHANGED);
 		m_flipV.down_box(FL_DIAMOND_DOWN_BOX);
 		m_flipV.callback(UpdateCallback, this);
@@ -326,6 +344,15 @@ public:
 		
 		// Fixed seed on purpose. I.e. every random palette is reproduceable!
 		srand(213123);
+		
+		// Fill palette (use blue tint at startup)
+		for(int i=0; i<256; ++i)
+		{
+			int lum = 255 - i;
+			m_palette[i*3+0] = lum;
+			m_palette[i*3+1] = lum / 32;
+			m_palette[i*3+2] = lum / 64;
+		}
 	}
 	
 	~MyWindow()
@@ -347,6 +374,7 @@ public:
 	int getPixelSize() const;
 	bool updatePixelFormat(bool startup = false);
 	void convertData(const u8* data, u32 size, u8* rgbOut, u32 tileX, u32 tileY, u8* palette = NULL);
+	void convertDXT(const u8* data, u32 size, u8* rgbOut, int DXTType, bool oneBitAlpha = false);
 	bool writeBitmap(const char* filename);
 	bool writeTga(const char* filename);
 	
@@ -385,6 +413,7 @@ private:
 	static void DimCallback(Fl_Widget* widget, void* param);
 	static void TileCallback(Fl_Widget* widget, void* param);
 	static void PaletteCallback(Fl_Widget* widget, void* param);
+	static void DXTCallback(Fl_Widget* widget, void* param);
 	static void OpsCallback(Fl_Widget* widget, void* param);
 	static void UpdateCallback(Fl_Widget* widget, void* param);
 
@@ -416,6 +445,8 @@ public:
 	Fl_Input m_paletteMin;
 	Fl_Input m_paletteMax;
 	Fl_Button m_loadPalette;
+	Fl_Check_Button m_DXTStream;
+	Fl_Choice m_DXT;
 	Fl_Check_Button m_flipV;
 	Fl_Check_Button m_flipH;
 	Fl_Check_Button m_colorCount;

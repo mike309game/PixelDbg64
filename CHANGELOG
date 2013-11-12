@@ -1,3 +1,10 @@
+12th November 2013 (PixelDbg 0.7)
+
++ Added S3TC DXT1/3/5 interpretation (5.5.5.1 or 5.6.5 format)
+* Palette now initialized at startup
+
+
+
 11th  November 2013 (PixelDbg 0.67)
 
 + Palette colors are now adjustable via channel order in pixel format group
@@ -5,6 +12,7 @@
 * Fixed wrong image resize if entered size is larger then window size
 * Moved color set (counter) to member variable for better memory usage
 * Fixed occassional crash with invalid addressing of channels under certain circumstances
+
 
 
 10th November 2013 (PixelDbg 0.65)

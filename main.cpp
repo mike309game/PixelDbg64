@@ -171,6 +171,27 @@ int MyWindow::handle(int event)
 		u32 ps = static_cast<u32>(getPixelSize());
 		u32 offset = y * w * ps + x * ps;
 		
+		// Check for DXT mode (6:1 or 4:1 compression ratio)
+		if(m_DXTStream.value() != 0)
+		{
+			int bx = x / 4;
+			int by = y / 4;
+			int numbx = w / 4;
+			int numby = h / 4;
+			int block = by * numby + bx;
+			
+			switch(m_DXT.value())
+			{
+			case 0:
+				offset = block * 8;
+				break;
+			case 1:
+			case 2:
+				offset = block * 16;			
+				break;
+			}
+		}
+
 		memset(m_offsetText, 0, sizeof(m_offsetText));
 		snprintf(m_offsetText, sizeof(m_offsetText), "%s", intToString(m_accumOffset + offset));
 		m_offset.value(m_offsetText);
@@ -457,7 +478,6 @@ void MyWindow::convertData(const u8* data, u32 size, u8* rgbOut, u32 tileX, u32 
 				{
 					u32 i = (by + y) * stride + (bx + x) * ps;
 					
-					// Make sure we don't read more data then is given
 					if(i >= size)
 					{
 						return;
@@ -537,6 +557,112 @@ void MyWindow::convertData(const u8* data, u32 size, u8* rgbOut, u32 tileX, u32 
 					rgbOut[dest+0] = r << rdiff;
 					rgbOut[dest+1] = g << gdiff;
 					rgbOut[dest+2] = b << bdiff;
+				}
+			}
+		}
+	}
+}
+
+void MyWindow::convertDXT(const u8* data, u32 size, u8* rgbOut, int DXTType, bool oneBitAlpha /* false */)
+{
+	int bitMask[4];
+	int rgbaChannels[4];
+	int rgbaBits[4];
+	int ps;
+	
+	if(!isValid() || !getPixelFormat(bitMask, rgbaChannels, rgbaBits, ps))
+	{
+		return;
+	}
+	
+	u32 width = static_cast<u32>(getImageWidth());
+	u32 height = static_cast<u32>(getImageHeight());
+	u32 stride = width * 3;
+	u32 xTiles = width / 4;
+	u32 yTiles = height / 4;
+	const u8* end = data + size;
+	u8 codes[16];
+	
+	for(u32 ty=0; ty<=yTiles; ++ty)
+	{
+		u32 by = ty * 4;
+		
+		for(u32 tx=0; tx<xTiles; ++tx)
+		{
+			// We iterate block by block, make sure we don't read more then is given
+			if(data + 8 > end)
+			{
+				return;
+			}
+			
+			u32 bx = tx * 4;
+			
+			// Skip alpha in DXT3/DXT5
+			if(DXTType > 1)
+			{
+				data += 8;
+			}
+			
+			u32 colors = *((u32*)data);
+			u32 clrlut = *((u32*)data + 1);
+			data += 8;
+			
+			// Extract two 16bit colors
+			u16 rgb0 = colors & 0x0000ffff;
+			u16 rgb1 = colors >> 16;
+			
+			// Decode colors to 888 format
+			int lut[4 * 5];
+			lut[0]  = ((rgb0 >> 11) << 3);
+			lut[1]  = oneBitAlpha ? ((rgb0 >> 6) << 3) & 0xff : ((rgb0 >> 5) << 2) & 0xff;
+			lut[2]  = oneBitAlpha ? ((rgb0 >> 1) << 3) & 0xff : ((rgb0 << 3) & 0xff);
+			lut[3]  = ((rgb1 >> 11) << 3);
+			lut[4]  = oneBitAlpha ? ((rgb1 >> 6) << 3) & 0xff : ((rgb1 >> 5) << 2) & 0xff;
+			lut[5]  = oneBitAlpha ? ((rgb1 >> 1) << 3) & 0xff : ((rgb1 << 3) & 0xff);
+			lut[6]  = (lut[0] * 2 + lut[3]) / 3;
+			lut[7]  = (lut[1] * 2 + lut[4]) / 3;
+			lut[8]  = (lut[2] * 2 + lut[5]) / 3;
+			lut[9]  = (lut[0] + lut[3] * 2) / 3;
+			lut[10] = (lut[1] + lut[4] * 2) / 3;
+			lut[11] = (lut[2] + lut[5] * 2) / 3;
+			lut[12] = (lut[0] + lut[3]) / 2;
+			lut[13] = (lut[1] + lut[4]) / 2;
+			lut[14] = (lut[2] + lut[5]) / 2;
+			lut[15] = 0;
+			lut[16] = 0;
+			lut[17] = 0;
+			
+			// Read color codes
+			for(u32 c=0; c<16; ++c)
+			{
+				codes[c] = (clrlut >> c * 2) & 3;
+			}
+			
+			// Decode 16 pixels
+			for(u32 y=0; y<4; ++y)
+			{
+				for(u32 x=0; x<4; ++x)
+				{
+					u32 code = codes[y * 4 + x];
+					u32 i = (by + y) * stride + (bx + x) * 3;
+					
+					switch(code)
+					{
+					case 0:
+					case 1:
+						code *= 3;
+						break;
+					case 2:
+						code = (DXTType == 1 && rgb0 < rgb1) ? 12 : 6;
+						break;
+					case 3:
+						code = (DXTType == 1 && rgb0 < rgb1) ? 15 : 9;
+						break;
+					};
+					
+					rgbOut[i+0] = lut[code + rgbaChannels[2]];
+					rgbOut[i+1] = lut[code + rgbaChannels[1]];
+					rgbOut[i+2] = lut[code + rgbaChannels[0]];
 				}
 			}
 		}
@@ -1022,6 +1148,55 @@ void MyWindow::PaletteCallback(Fl_Widget* widget, void* param)
 	}
 }
 
+void MyWindow::DXTCallback(Fl_Widget* widget, void* param)
+{
+	if(!param)
+	{
+		return;
+	}
+	MyWindow* p = static_cast<MyWindow*>(param);
+	
+	if(widget == &p->m_DXTStream)
+	{
+		if(p->m_DXTStream.value() == 0)
+		{
+			p->m_tile.activate();
+			p->m_tileX.activate();
+			p->m_tileY.activate();
+			p->m_DXT.deactivate();
+			p->m_paletteMode.activate();
+			p->m_randomizePalette.activate();
+			p->m_paletteMin.activate();
+			p->m_paletteMax.activate();
+			p->m_loadPalette.activate();
+		}
+		else
+		{
+			p->m_tile.deactivate();
+			p->m_tileX.deactivate();
+			p->m_tileY.deactivate();
+			p->m_DXT.activate();
+			p->m_paletteMode.deactivate();
+			p->m_randomizePalette.deactivate();
+			p->m_paletteMin.deactivate();
+			p->m_paletteMax.deactivate();
+			p->m_loadPalette.deactivate();
+			
+			// Set appropriate pixel format for DXT
+			p->m_rgbaBits.value("5.6.5.0");
+		}
+		
+		UpdateCallback(widget, param);
+	}
+	else if(widget == &p->m_DXT)
+	{
+		// Set appropriate pixel format for DXT
+		p->m_rgbaBits.value("5.6.5.0");
+		
+		UpdateCallback(widget, param);
+	}
+}
+
 void MyWindow::OpsCallback(Fl_Widget* widget, void* param)
 {
 	if(!param)
@@ -1084,10 +1259,30 @@ void MyWindow::UpdateCallback(Fl_Widget* widget, void* param) // Callback to upd
 	u32 stride = u32(w) * 3;
 	memset(p->m_pixels, 0, size);
 	
-	// Convert new data
-	bool paletteMode = p->m_paletteMode.value() != 0;
-	length = std::min(size, length);
-	p->convertData(text, length, p->m_pixels, u32(tx), u32(ty), paletteMode ? p->m_palette : NULL);
+	// Convert data
+	if(p->m_DXTStream.value() == 0)
+	{
+		bool paletteMode = p->m_paletteMode.value() != 0;
+		length = std::min(size, length);
+		p->convertData(text, length, p->m_pixels, u32(tx), u32(ty), paletteMode ? p->m_palette : NULL);
+	}
+	else
+	{
+		int rgbaBits[4];
+		if(p->getRGBABits(rgbaBits))
+		{
+			int type = 1;
+			switch(p->m_DXT.value())
+			{
+			case 0: type = 1; break;
+			case 1: type = 3; break;
+			case 2: type = 5; break;
+			}
+			bool oneBitAlpha = rgbaBits[3] == 1;
+
+			p->convertDXT(text, length, p->m_pixels, type, oneBitAlpha);
+		}
+	}
 	
 	//
 	// See if we have other ops to perform on the data (we could combine some of them to save time but maybe later):
