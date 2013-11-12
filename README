@@ -24,6 +24,7 @@ Current limitations:
 * Window resize is clamped to maximum resolution
 * Maximum filesize is 2^32
 * Pixel format maximum is 32 bpp with no more then 8 bit per channel (i.e. valid format is 5.5.5.1 but not 9.9.9.5)
+* Only forward scrolling is supported for now (while holding CTRL and moving mouse over the image an offset is calculated)
 
 
 
