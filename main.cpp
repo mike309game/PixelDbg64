@@ -863,8 +863,9 @@ void MyWindow::ButtonCallback(Fl_Widget* widget, void* param)
 		#if defined _WIN32 && defined __GNUC__
 		snprintf(buff, sizeof(buff), "PixelDbg %.2f\nNikita Kindt (n.kindt.pdbg<at>gmail.com)\nCompiled on %s with TDM-GCC %d.%d.%d", 
 				 kVersion, __DATE__, __GNUC__, __GNUC_MINOR__, __GNUC_PATCHLEVEL__);
-		#else
-		#error Not there yet
+		#elif defined __GNUC__
+		snprintf(buff, sizeof(buff), "PixelDbg %.2f\nNikita Kindt (n.kindt.pdbg<at>gmail.com)\nCompiled on %s with g++ %d.%d.%d", 
+				 kVersion, __DATE__, __GNUC__, __GNUC_MINOR__, __GNUC_PATCHLEVEL__);
 		#endif
 
 		fl_message(buff);
