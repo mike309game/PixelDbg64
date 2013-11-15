@@ -865,7 +865,7 @@ void MyWindow::ButtonCallback(Fl_Widget* widget, void* param)
 				 kVersion, __DATE__, __GNUC__, __GNUC_MINOR__, __GNUC_PATCHLEVEL__);
 		#elif defined __GNUC__
 		snprintf(buff, sizeof(buff), "PixelDbg %.2f\nNikita Kindt (n.kindt.pdbg<at>gmail.com)\nCompiled on %s with g++ %d.%d.%d", 
-				 kVersion, __DATE__, __GNUC__, __GNUC_MINOR__, __GNUC_PATCHLEVEL__);]
+				 kVersion, __DATE__, __GNUC__, __GNUC_MINOR__, __GNUC_PATCHLEVEL__);
 		#else
 		#error Platform not supported!
 		#endif
