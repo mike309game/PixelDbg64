@@ -26,8 +26,7 @@ PixelDbg
 
 1. About
 
-PixelDbg allows you to open any data stream and look at it. All data feeded to PixelDbg will be displayed in the main window with the ability to scroll through it and change
-various parameters to help find or inspect images in the stream. Large unknown archives can be checked for images if they are not compressed or encrypted. Compressed or encrypted
+PixelDbg allows you to open any data stream and look at it. All data given to PixelDbg will be displayed in the main window with the ability to scroll through it and change various parameters to help find or inspect images in the stream. Large unknown archives can be checked for images if they are not compressed or encrypted. Compressed or encrypted
 data can be easily discovered with noise in the image (due to high entropy).
 
 Current features:
