@@ -25,16 +25,22 @@
 #ifndef __MAIN_H
 #define __MAIN_H
 
+#define NOMINMAX
+
+#include <stdarg.h>
 #include <iostream>
 #include <set>
 #include <FL/Fl.H>
 #include <FL/Fl_Double_Window.H>
 #include <FL/Fl_Box.H>
 #include <FL/Fl_Input.H>
+#include <FL/Fl_Output.H>
 #include <FL/Fl_Input_Choice.H>
 #include <FL/Fl_Choice.H>
 #include <FL/Fl_Button.H>
 #include <FL/Fl_Check_Button.H>
+#include <FL/Fl_Scroll.H>
+#include <FL/Fl_Scrollbar.H>
 #include <FL/Fl_BMP_Image.H>
 #include <FL/Fl_Native_File_Chooser.H>
 #include <FL/fl_message.H>
@@ -80,25 +86,39 @@ public:
 	T y;
 };
 
-class MyWindow : public Fl_Double_Window
+class PixelDbgWnd : public Fl_Double_Window
 {
 public:
 	static const u32 kMaxDim = 1024;
 	static const u32 kMaxBufferSize = kMaxDim * kMaxDim * 4;
 	static const u32 kMaxImageSize = kMaxDim * kMaxDim * 3;
-	static const float kVersion = 0.7f;
-	
-	MyWindow(const char* text) :
-		Fl_Double_Window(855, 515, text),
-		m_dimGroup(5, 2, 195, 90),
+	static const u32 kVersionMajor = 0;
+	static const u32 kVersionMinor = 75;
+
+	enum ConvertFlags
+	{
+		CF_IgnoreChannelOrder = (1<<0),
+		CF_IgnoreTiles = (1<<1),
+		CF_IgnoreRedChannel = (1<<2),
+		CF_IgnoreGreenChannel = (1<<3),
+		CF_IgnoreBlueChannel = (1<<4),
+		CF_IgnoreAlphaChannel = (1<<5)
+	};
+
+	PixelDbgWnd(const char* text) :
+		Fl_Double_Window(881, 536, text),
+		m_leftArea(0, 0, 220, h()),
+		m_dimGroup(5, 1, 195, 91),
 		m_fileGroup(5, 95, 195, 80),
-		m_formatGroup(5, 178, 195, 106),
-		m_paletteGroup(5, 287, 195, 87),
-		m_opsGroup(5, 377, 195, 85),
+		m_formatGroup(5, 178, 195, 124),
+		m_paletteGroup(5, 305, 195, 110),
+		m_opsGroup(5, 418, 195, 90),
 		m_width(120, 5, 70, 20, "Width [1, 1024]:"),
 		m_height(120, 27, 70, 20, "Height [1, 1024]:"),
-		m_data(60, 49, 130, 22, "Data:"),
-		m_byteCount(5, 70, 200, 22),
+		m_data(50, 49, 140, 21, "Data:"),
+		m_backwardButton(145, 70, 23, 20, "@<"),
+		m_forwardButton(168, 70, 23, 20, "@>"),
+		m_byteCount(5, 70, 140, 20),
 		m_offset(110, 145, 80, 22, "Offset:"),
 		m_saveButton(15, 100, 90, 40, "Save image"),
 		m_openButton(110, 100, 80, 40, "Open file"),
@@ -109,28 +129,35 @@ public:
 		m_alphaChannel(165, 182, 24, 20, "A:"),
 		m_rgbaBits(85, 205, 105, 20, "RGBA bits:"),
 		m_formatInfo(10, 230, 180, 22),
-		m_tile(11, 257, 47, 20, "Tile"),
-		m_tileX(78, 257, 45, 20, "X:"),
-		m_tileY(145, 257, 45, 20, "Y:"),
-		m_paletteMode(11, 292, 95, 20, "Use palette"),
-		m_randomizePalette(111, 292, 79, 22, "Randomize"),
-		m_paletteMin(47, 317, 45, 20, "Min.:"),
-		m_paletteMax(145, 317, 45, 20, "Max.:"),
-		m_loadPalette(15, 342, 175, 25, "Load palette from file"),
-		m_DXTStream(11, 381, 100, 20, "Interpret as: "),
-		m_DXT(113, 381, 75, 20),
-		m_flipV(11, 399, 185, 20, "Flip vertically"),
-		m_flipH(11, 417, 185, 20, "Flip horizontally"),
-		m_colorCount(11, 435, 185, 20, "Count colors"),
-		m_imageBox(210, 2, 0, 0),
-		m_aboutButton(5, 467, 195, 23, "About"),
+		m_redMask(11, 252, 31, 20, "R"),
+		m_greenMask(42, 252, 31, 20, "G"),
+		m_blueMask(73, 252, 31, 20, "B"),
+		m_alphaMask(104, 252, 31, 20, "A"),
+		m_tile(11, 275, 47, 20, "Tile"),
+		m_tileX(78, 275, 45, 20, "X:"),
+		m_tileY(145, 275, 45, 20, "Y:"),
+		m_paletteMode(11, 308, 70, 20, "Palette"),
+		m_paletteIndices(91, 308, 105, 20, ""),
+		m_paletteOffset(110, 330, 80, 20, "From offset:"),
+		m_loadPalette(15, 355, 175, 25, "Load palette (offset / file)"),
+		m_savePalette(15, 383, 175, 25, "Save palette"),
+		m_DXTMode(11, 421, 100, 20, "Interpret as: "),
+		m_DXTType(113, 421, 75, 20),
+		m_flipV(11, 441, 110, 20, "Flip vertically"),
+		m_flipH(11, 461, 125, 20, "Flip horizontally"),
+		m_colorCount(11, 481, 150, 20, "Count colors"),
+		m_aboutButton(5, 511, 195, 23, "About"),
 		m_windowSize(this->w(), this->h()),
 		m_cursorChanged(false),
 		m_accumOffset(0),
-		m_offsetChanged(false)
-	{	
-		// Limit window size on resize (1x282 as minimum image)
-		size_range(216, 285, 1239, 1045);
+		m_offsetChanged(false),
+		m_currentFileSize(0)
+	{
+		// Limit window size on resize (1x70 as minimum image)
+		size_range(242, 93, 1265, 1075);
+
+		m_leftArea.end();
+		m_leftArea.type(Fl_Scroll::VERTICAL_ALWAYS);
 		
 		m_dimGroup.box(FL_ENGRAVED_BOX);
 		m_dimGroup.color(FL_DARK1);
@@ -153,7 +180,7 @@ public:
 		m_width.tooltip("Image width to display loaded data.");
 
 		m_height.maximum_size(4);
-		m_height.insert("512");
+		m_height.insert("534");
 		m_height.type(FL_INT_INPUT);
 		m_height.textfont(FL_COURIER);
 		m_height.textsize(12);
@@ -161,25 +188,34 @@ public:
 		m_height.callback(DimCallback, this);
 		m_height.tooltip("Image height to display loaded data.");
 		
-		m_data.maximum_size(kMaxDim * kMaxDim * 4);
+		m_data.maximum_size(kMaxBufferSize);
 		m_data.textfont(FL_COURIER);
 		m_data.textsize(12);
 		m_data.when(FL_WHEN_CHANGED);
 		m_data.callback(UpdateCallback, this);
 		m_data.tooltip("Data that is displayed as the actual image. Different data can be inserted or deleted here like normal text.");
-		
-		char buff[64];
-		snprintf(buff, sizeof(buff), "0/%u Bytes", kMaxDim * kMaxDim * 4);
-		m_byteCount.copy_label(buff);
+
+		m_backwardButton.box(FL_NO_BOX);
+		m_backwardButton.when(FL_WHEN_RELEASE);
+		m_backwardButton.callback(DimCallback, this);
+		m_backwardButton.tooltip("Move offset 1 byte backwards (clamped to 0).");
+
+		m_forwardButton.box(FL_NO_BOX);
+		m_forwardButton.when(FL_WHEN_RELEASE);
+		m_forwardButton.callback(DimCallback, this);
+		m_forwardButton.tooltip("Move offset 1 byte forward (clamped to file size).");
+
+		m_byteCount.labelsize(11);
+		m_byteCount.label("Visible: 0.00 %");
 		
 		m_offset.maximum_size(10);
 		m_offset.insert("0");
 		m_offset.type(FL_INT_INPUT);
 		m_offset.textfont(FL_COURIER);
 		m_offset.textsize(12);
+		m_offset.when(FL_WHEN_ENTER_KEY_ALWAYS);
 		m_offset.callback(OffsetCallback, this);
-		m_offset.tooltip("File offset to read from when opening file. Offset can be picked from the image by holding CTRL. "
-                         "File offset is not adjusted automatically if data is inserted or deleted manually in Data editbox!");
+		m_offset.tooltip("File offset to read from when opening file. Offset can be picked from the image by holding CTRL.");
 
 		m_saveButton.box(FL_THIN_UP_BOX);
 		m_saveButton.when(FL_WHEN_RELEASE);
@@ -191,7 +227,7 @@ public:
 		m_autoReload.down_box(FL_DIAMOND_DOWN_BOX);
 		m_autoReload.when(FL_WHEN_CHANGED);
 		m_autoReload.callback(OffsetCallback, this);
-		m_autoReload.tooltip("When checked, auto-reload current file after each offset pick (CTRL + mouse move).");
+		m_autoReload.tooltip("If checked, auto-reload current file after each offset pick (CTRL + mouse move).");
 		
 		m_redChannel.maximum_size(1);
 		m_redChannel.insert("3");
@@ -236,7 +272,31 @@ public:
 		m_rgbaBits.when(FL_WHEN_CHANGED);
 		m_rgbaBits.callback(ChannelCallback, this);
 		m_rgbaBits.tooltip("Pixel and channel size used to interpret the data stream. Can only be 8, 16, 24 or 32 bpp.");
-				
+
+		m_redMask.value(1);
+		m_redMask.down_box(FL_DIAMOND_DOWN_BOX);
+		m_redMask.when(FL_WHEN_CHANGED);
+		m_redMask.callback(UpdateCallback, this);
+		m_redMask.tooltip("Enable or disable red channel.");
+
+		m_greenMask.value(1);
+		m_greenMask.down_box(FL_DIAMOND_DOWN_BOX);
+		m_greenMask.when(FL_WHEN_CHANGED);
+		m_greenMask.callback(UpdateCallback, this);
+		m_greenMask.tooltip("Enable or disable green channel.");
+
+		m_blueMask.value(1);
+		m_blueMask.down_box(FL_DIAMOND_DOWN_BOX);
+		m_blueMask.when(FL_WHEN_CHANGED);
+		m_blueMask.callback(UpdateCallback, this);
+		m_blueMask.tooltip("Enable or disable blue channel.");
+
+		m_alphaMask.value(1);
+		m_alphaMask.down_box(FL_DIAMOND_DOWN_BOX);
+		m_alphaMask.when(FL_WHEN_CHANGED);
+		m_alphaMask.callback(UpdateCallback, this);
+		m_alphaMask.tooltip("Enable or disable alpha channel.");
+
 		m_tile.when(FL_WHEN_CHANGED);
 		m_tile.down_box(FL_DIAMOND_DOWN_BOX);
 		m_tile.callback(TileCallback, this);
@@ -265,56 +325,50 @@ public:
 		m_paletteMode.when(FL_WHEN_CHANGED);
 		m_paletteMode.down_box(FL_DIAMOND_DOWN_BOX);
 		m_paletteMode.callback(UpdateCallback, this);
-		m_paletteMode.tooltip("If checked, use palette to display image.");
+		m_paletteMode.tooltip("If checked, use palette to display image. Every byte acts as a look-up index (0-255) into current palette.");
+
+		m_paletteIndices.label("Used: 0-0");
+		m_paletteIndices.deactivate();
 		
 		m_paletteMode.when(FL_WHEN_CHANGED);
 		m_paletteMode.callback(PaletteCallback, this);
-			
-		m_randomizePalette.box(FL_THIN_UP_BOX);
-		m_randomizePalette.when(FL_WHEN_RELEASE);
-		m_randomizePalette.callback(PaletteCallback, this);
-		m_randomizePalette.deactivate();
-		
-		m_paletteMin.maximum_size(3);
-		m_paletteMin.insert("0");
-		m_paletteMin.type(FL_INT_INPUT);
-		m_paletteMin.textfont(FL_COURIER);
-		m_paletteMin.textsize(12);
-		m_paletteMin.when(FL_WHEN_CHANGED);
-		m_paletteMin.callback(PaletteCallback, this);
-		m_paletteMin.deactivate();
-		m_paletteMin.tooltip("Min. range when generating random palette.");
 
-		m_paletteMax.maximum_size(3);
-		m_paletteMax.insert("255");
-		m_paletteMax.type(FL_INT_INPUT);
-		m_paletteMax.textfont(FL_COURIER);
-		m_paletteMax.textsize(12);
-		m_paletteMax.when(FL_WHEN_CHANGED);
-		m_paletteMax.callback(PaletteCallback, this);
-		m_paletteMax.deactivate();
-		m_paletteMax.tooltip("Max. range when generating random palette.");
+		m_paletteOffset.maximum_size(m_offset.maximum_size());
+		m_paletteOffset.insert("0");
+		m_paletteOffset.type(FL_INT_INPUT);
+		m_paletteOffset.textfont(FL_COURIER);
+		m_paletteOffset.textsize(12);
+		m_paletteOffset.when(FL_WHEN_ENTER_KEY_ALWAYS);
+		m_paletteOffset.callback(PaletteCallback, this);
+		m_paletteOffset.deactivate();
+		m_paletteOffset.tooltip("Load palette from specified offset of currently loaded file.");
 		
 		m_loadPalette.box(FL_THIN_UP_BOX);
 		m_loadPalette.when(FL_WHEN_RELEASE);
 		m_loadPalette.callback(PaletteCallback, this);
 		m_loadPalette.deactivate();
-		m_loadPalette.tooltip("Open any file as palette (first 768 bytes). If file type is tga or bmp, the actual pixels are used as palette colors and file header is ignored.");
+		m_loadPalette.tooltip("Load palette from specified offset in current file or from another file if palette offset is 0. If file type is tga or bmp, the actual pixels are used as palette colors and file header is ignored.");
 		
-		m_DXTStream.when(FL_WHEN_CHANGED);
-		m_DXTStream.down_box(FL_DIAMOND_DOWN_BOX);
-		m_DXTStream.callback(DXTCallback, this);
-		m_DXTStream.tooltip("If checked, interpret data stream as selected S3TC DXT variant. RGBA bits can be either 5.6.5.0 or 5.5.5.1, other RGBA bits are ignored.");
+		m_savePalette.box(FL_THIN_UP_BOX);
+		m_savePalette.when(FL_WHEN_RELEASE);
+		m_savePalette.callback(PaletteCallback, this);
+		m_savePalette.deactivate();
+		m_savePalette.tooltip("Save current palette as 24bpp bitmap file.");
+
+		m_DXTMode.when(FL_WHEN_CHANGED);
+		m_DXTMode.down_box(FL_DIAMOND_DOWN_BOX);
+		m_DXTMode.callback(DXTCallback, this);
+		m_DXTMode.tooltip("If checked, interpret data stream as selected S3TC DXT variant. RGBA bits can be either 5.6.5.0 or 5.5.5.1, other RGBA bits are ignored.");
 		
-		m_DXT.textfont(FL_COURIER);
-		m_DXT.textsize(12);
-		m_DXT.add("DXT1");
-		m_DXT.add("DXT3");
-		m_DXT.add("DXT5");
-		m_DXT.value(0);
-		m_DXT.when(FL_WHEN_CHANGED);
-		m_DXT.callback(DXTCallback, this);
-		m_DXT.deactivate();
+		m_DXTType.textfont(FL_COURIER);
+		m_DXTType.textsize(12);
+		m_DXTType.add("DXT1");
+		m_DXTType.add("DXT3");
+		m_DXTType.add("DXT5");
+		m_DXTType.value(0);
+		m_DXTType.when(FL_WHEN_CHANGED);
+		m_DXTType.callback(DXTCallback, this);
+		m_DXTType.deactivate();
 		
 		m_flipV.when(FL_WHEN_CHANGED);
 		m_flipV.down_box(FL_DIAMOND_DOWN_BOX);
@@ -330,20 +384,31 @@ public:
 		m_colorCount.down_box(FL_DIAMOND_DOWN_BOX);
 		m_colorCount.callback(OpsCallback, this);
 		m_colorCount.tooltip("If checked, count unique colors every time the image changes.");
-		
+
 		m_aboutButton.box(FL_THIN_UP_BOX);
 		m_aboutButton.when(FL_WHEN_RELEASE);
 		m_aboutButton.callback(ButtonCallback, this);
+
+		// Don't know how to get those controls into extra box without allocating memory (need to end left area scroll before calling right area ctor)
+		m_rightArea = new Fl_Box(m_leftArea.w() + 5, 0, w() - m_leftArea.w(), h());
+		m_imageScroll = new Fl_Scrollbar(w() - 15, 0, 15, h());
+		m_imageBox = new Fl_Box(m_leftArea.w(), 2, w() - 15 - m_leftArea.w(), h() - 2);
+
+		m_imageScroll->type(FL_VERTICAL);
+		m_imageScroll->align(FL_ALIGN_RIGHT);
+		m_imageScroll->value(0, 1, 0, 1);
+		m_imageScroll->when(FL_WHEN_CHANGED);
+		m_imageScroll->callback(ScrollbarCallback, this);
+		m_imageScroll->deactivate();
 		
-		m_pixels = new u8[kMaxDim * kMaxDim * 3]; // BGR as pixels in window
-		m_text = new char[kMaxDim * kMaxDim * 4]; // BGRA as text in editbox
+		m_pixels = new u8[kMaxImageSize]; // BGR as pixels in window
+		m_text = new char[kMaxBufferSize]; // BGRA as text in editbox
 		m_image = 0;
 		
 		// Show current pixel format
 		updatePixelFormat(true);
-		
-		// Fixed seed on purpose. I.e. every random palette is reproduceable!
-		srand(213123);
+
+		memset(m_currentFile, 0, sizeof(m_currentFile));
 		
 		// Fill palette (use blue tint at startup)
 		for(int i=0; i<256; ++i)
@@ -352,13 +417,26 @@ public:
 			m_palette[i*3+0] = lum;
 			m_palette[i*3+1] = lum / 32;
 			m_palette[i*3+2] = lum / 64;
+			m_rawPalette[i*3+0] = m_palette[i*3+0];
+			m_rawPalette[i*3+1] = m_palette[i*3+1];
+			m_rawPalette[i*3+2] = m_palette[i*3+2];
+			m_rawPalette[i*3+3] = 0;
 		}
 	}
 	
-	~MyWindow()
+	~PixelDbgWnd()
 	{
 		delete [] m_text;
 		delete [] m_pixels;
+
+		delete m_imageScroll;
+		delete m_imageBox;
+		delete m_rightArea;
+
+		if(m_image)
+		{
+			m_image->~Fl_RGB_Image();
+		}
 	}
 	
 	virtual void draw();
@@ -373,12 +451,33 @@ public:
 	bool getRGBABits(int rgbaBits[4]);
 	int getPixelSize() const;
 	bool updatePixelFormat(bool startup = false);
-	void convertData(const u8* data, u32 size, u8* rgbOut, u32 tileX, u32 tileY, u8* palette = NULL);
-	void convertDXT(const u8* data, u32 size, u8* rgbOut, int DXTType, bool oneBitAlpha = false);
-	bool writeBitmap(const char* filename);
+	void updateScrollbar(u32 pos, bool resize);
+	void convertData(const u8* data, u32 size, u8* rgbOut, u32 flags = 0, u32 tileX = 0xffff, u32 tileY = 0xffff, u8* palette = NULL);
+	void convertDXT(const u8* data, u32 size, u8* rgbOut, u32 flags, int DXTType, bool oneBitAlpha = false);
+	void convertPalette(const u8* data, u32 size, u8* rgbOut);
+	void flipVertically(int w, int h, void* data);
+	u32 readFile(const char* name, void* out, u32 size, u32 offset = 0);
+	bool writeBitmap(const char* filename, int width, int height, void* data);
 	bool writeTga(const char* filename);
+	const char* formatString(const char* text, ...);
 	
 	// Inline
+	const char* getCurrentFileName() const
+	{
+		if(m_currentFile[0] != 0)
+		{
+			#ifdef _WIN32
+			const char* s = strrchr(m_currentFile, '\\');
+			#else
+			const char* s = strrchr(m_currentFile, '/');
+			#endif
+
+			return s ? s + 1 : NULL;
+		}
+
+		return NULL;
+	}
+
 	bool isDimValid() const
 	{
 		return getImageWidth() != -1 && getImageHeight() != -1;
@@ -405,7 +504,56 @@ public:
 	{
 		return atoi(m_offset.value());
 	}
-	
+
+	int getPaletteOffset() const
+	{
+		return atoi(m_paletteOffset.value());
+	}
+
+	u32 getNumVisibleBytes() const
+	{
+		u32 w = (u32)getImageWidth();
+		u32 h = (u32)getImageHeight();
+		u32 s = (u32)getPixelSize();
+		u32 b = w * h * s;
+
+		if(isDXTMode())
+		{
+			switch(m_DXTType.value())
+			{
+			case 0: b /= 6; break;
+			case 1:
+			case 2: b /= 4; break;
+			}
+		}
+
+		return b;
+	}
+
+	u32 getRGBAIgnoreMask() const
+	{
+		u32 flags = (m_redMask.value() == 0) ? CF_IgnoreRedChannel : 0;
+		flags |= (m_greenMask.value() == 0) ? CF_IgnoreGreenChannel : 0;
+		flags |= (m_blueMask.value() == 0) ? CF_IgnoreBlueChannel : 0;
+		flags |= (m_alphaMask.value() == 0) ? CF_IgnoreAlphaChannel : 0;
+		return flags;
+	}
+
+	bool isPaletteMode() const
+	{
+		return m_paletteMode.value() != 0;
+	}
+
+	bool isDXTMode() const
+	{
+		return m_DXTMode.value() != 0;
+	}
+
+	Fl_Box& getImageBox() const
+	{
+		return *m_imageBox;
+	}
+
 private:
 	static void ButtonCallback(Fl_Widget* widget, void* param);
 	static void OffsetCallback(Fl_Widget* widget, void* param);
@@ -415,9 +563,11 @@ private:
 	static void PaletteCallback(Fl_Widget* widget, void* param);
 	static void DXTCallback(Fl_Widget* widget, void* param);
 	static void OpsCallback(Fl_Widget* widget, void* param);
+	static void ScrollbarCallback(Fl_Widget* widget, void* param);
 	static void UpdateCallback(Fl_Widget* widget, void* param);
 
 public:
+	Fl_Scroll m_leftArea;
 	Fl_Box m_dimGroup;
 	Fl_Box m_fileGroup;
 	Fl_Box m_formatGroup;
@@ -425,7 +575,9 @@ public:
 	Fl_Box m_opsGroup;
 	Fl_Input m_width;
 	Fl_Input m_height;
-	Fl_Input m_data;
+	Fl_Output m_data;
+	Fl_Button m_backwardButton;
+	Fl_Button m_forwardButton;
 	Fl_Box m_byteCount;
 	Fl_Input m_offset;
 	Fl_Button m_saveButton;
@@ -437,21 +589,27 @@ public:
 	Fl_Input m_alphaChannel;
 	Fl_Input m_rgbaBits;
 	Fl_Box m_formatInfo;
+	Fl_Check_Button m_redMask;
+	Fl_Check_Button m_greenMask;
+	Fl_Check_Button m_blueMask;
+	Fl_Check_Button m_alphaMask;
 	Fl_Check_Button m_tile;
 	Fl_Input m_tileX;
 	Fl_Input m_tileY;
 	Fl_Check_Button m_paletteMode;
-	Fl_Button m_randomizePalette;
-	Fl_Input m_paletteMin;
-	Fl_Input m_paletteMax;
+	Fl_Box m_paletteIndices;
+	Fl_Input m_paletteOffset;
 	Fl_Button m_loadPalette;
-	Fl_Check_Button m_DXTStream;
-	Fl_Choice m_DXT;
+	Fl_Button m_savePalette;
+	Fl_Check_Button m_DXTMode;
+	Fl_Choice m_DXTType;
 	Fl_Check_Button m_flipV;
 	Fl_Check_Button m_flipH;
 	Fl_Check_Button m_colorCount;
-	Fl_Box m_imageBox;
 	Fl_Button m_aboutButton;
+	Fl_Box* m_rightArea;
+	Fl_Box* m_imageBox;
+	Fl_Scrollbar* m_imageScroll;
 	Fl_RGB_Image* m_image;
 	
 	u8* m_pixels; // Displayed pixel data in main window
@@ -462,8 +620,10 @@ public:
 	bool m_offsetChanged;
 	char m_offsetText[32]; // To avoid memory allocs
 	char m_currentFile[260];
+	u32 m_currentFileSize;
 	char m_rawMemoryFlRGBImage[sizeof(Fl_RGB_Image)];
 	u8 m_palette[256 * 3];
+	u8 m_rawPalette[256 * 4];
 	std::set<u32> m_colorSet;
 };
 

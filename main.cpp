@@ -27,15 +27,30 @@
 // Entry point:
 int main(int argc, char** argv)
 {
-	char buff[32];
-	memset(buff, 0, sizeof(buff));
-	snprintf(buff, sizeof(buff), "PixelDbg %.2f", MyWindow::kVersion);
+	#if defined _DEBUG && defined _MSC_VER
+	_CrtMemState memState;
+	_CrtMemCheckpoint(&memState);
+	#endif
 
-	MyWindow window(buff);
-	window.end();
-	window.show(argc, argv);
+	int ret;
+	{
+		char buff[32];
+		memset(buff, 0, sizeof(buff));
+		snprintf(buff, sizeof(buff)-1, "PixelDbg %u.%u", PixelDbgWnd::kVersionMajor, PixelDbgWnd::kVersionMinor);
+
+		PixelDbgWnd window(buff);
+		window.end();
+		window.show(argc, argv);
 	
-	return Fl::run();
+		ret = Fl::run();
+	}
+
+	#if defined _DEBUG && defined _MSC_VER
+	// FLTK seems to hold something at this point (probably static vars)
+	_CrtMemDumpAllObjectsSince(&memState);
+	#endif
+
+	return ret;
 }
 
 //
@@ -47,7 +62,7 @@ namespace
 	{
 		static char s_buff[16];
 		memset(s_buff, 0, sizeof(s_buff));
-		snprintf(s_buff, sizeof(s_buff), "%d", i);
+		snprintf(s_buff, sizeof(s_buff)-1, "%d", i);
 		return s_buff;
 	}
 	
@@ -64,16 +79,16 @@ namespace
 };
 
 //
-// MyWindow
+// PixelDbgWnd
 //
-void MyWindow::draw()
+void PixelDbgWnd::draw()
 {
 	int w = this->w();
 	int h = this->h();
 	
 	if(m_windowSize.x != w || m_windowSize.y != h)
 	{
-		// Resize happend (adjust dimension fields)
+		// Resize happend (adjust dimension fields and scroll control)
 		if(isDimValid())
 		{
 			int imagew = getImageWidth();
@@ -87,7 +102,11 @@ void MyWindow::draw()
 			
 			imageh = clampValue(imageh + deltah, 1, (int)kMaxDim);
 			m_height.value(intToString(imageh));
-		
+
+			updateScrollbar(m_imageScroll->value(), true);
+
+			m_leftArea.size(220, h);
+
 			// Redraw image
 			// Note: Passing <this> for widget indicates that we currently resize the window and can't flush!
 			UpdateCallback(this, this);
@@ -97,29 +116,27 @@ void MyWindow::draw()
 	Fl_Double_Window::draw();
 }
 	
-int MyWindow::handle(int event)
+int PixelDbgWnd::handle(int event)
 {
+	u32 w = (u32)getImageWidth();
+	u32 h = (u32)getImageHeight();
+	u32 x = (u32)Fl::event_x();
+	u32 y = (u32)Fl::event_y();
+	u32 r = w + x;
+    u32 b = h + y;
+
+	bool insideImage = x >= getImageBox().x() && y >= getImageBox().y() && x <= r && y <= b;
 	bool ctrlDown = false;
-	bool insideImage = false;
-	u32 w, h, x, y, r, b;
-	
+
 	if(Fl::event_state() == FL_CTRL)
 	{
 		// Check if we have a valid image
-		if(m_imageBox.w() > 0 && m_imageBox.h() > 0 && isDimValid())
+		if(getImageBox().w() > 0 && getImageBox().h() > 0 && isDimValid())
 		{
-			w = static_cast<u32>(getImageWidth());
-			h = static_cast<u32>(getImageHeight());
-			x = static_cast<u32>(Fl::event_x());
-			y = static_cast<u32>(Fl::event_y());
-			r = w + x;
-			b = h + y;
-			
-			if(x >= m_imageBox.x() && y >= m_imageBox.y() && x <= r && y <= b)
+			if(insideImage)
 			{
 				ctrlDown = true;
-				insideImage = true;
-				
+
 				// Change cursor
 				if(!m_cursorChanged)
 				{
@@ -129,6 +146,8 @@ int MyWindow::handle(int event)
 					m_offset.color(FL_YELLOW);
 					m_offset.redraw();
 				}
+
+				m_imageScroll->deactivate();
 			}
 		}
 	}
@@ -142,6 +161,8 @@ int MyWindow::handle(int event)
 			
 			m_offset.color(FL_WHITE);
 			m_offset.redraw();
+
+			m_imageScroll->activate();
 			
 			// Reload file if desired
 			if(m_autoReload.value() != 0)
@@ -154,8 +175,8 @@ int MyWindow::handle(int event)
 	if(event == FL_MOVE && ctrlDown && insideImage)
 	{
 		// Calculate offset on mouse move if CTRL is pressed and we are inside the image box
-		x -= m_imageBox.x();
-		y -= m_imageBox.y();
+		x -= getImageBox().x();
+		y -= getImageBox().y();
 		
 		// Take flipping ops into account
 		if(m_flipV.value() != 0)
@@ -168,11 +189,11 @@ int MyWindow::handle(int event)
 		}
 		
 		// Calculate offset in bytes
-		u32 ps = static_cast<u32>(getPixelSize());
+		u32 ps = (u32)getPixelSize();
 		u32 offset = y * w * ps + x * ps;
 		
 		// Check for DXT mode (6:1 or 4:1 compression ratio)
-		if(m_DXTStream.value() != 0)
+		if(isDXTMode())
 		{
 			int bx = x / 4;
 			int by = y / 4;
@@ -180,7 +201,7 @@ int MyWindow::handle(int event)
 			int numby = h / 4;
 			int block = by * numby + bx;
 			
-			switch(m_DXT.value())
+			switch(m_DXTType.value())
 			{
 			case 0:
 				offset = block * 8;
@@ -193,14 +214,14 @@ int MyWindow::handle(int event)
 		}
 
 		memset(m_offsetText, 0, sizeof(m_offsetText));
-		snprintf(m_offsetText, sizeof(m_offsetText), "%s", intToString(m_accumOffset + offset));
+		snprintf(m_offsetText, sizeof(m_offsetText)-1, "%s", intToString(m_accumOffset + offset));
 		m_offset.value(m_offsetText);
 	}
 	
 	return Fl_Double_Window::handle(event);
 }
 
-bool MyWindow::isFormatValid() const
+bool PixelDbgWnd::isFormatValid() const
 {
 	int bitMask[4];
 	int rgbaChannels[4];
@@ -210,7 +231,7 @@ bool MyWindow::isFormatValid() const
 	return getPixelFormat(bitMask, rgbaChannels, rgbaBits, pixelSize);
 }
 
-int MyWindow::getRedBits() const
+int PixelDbgWnd::getRedBits() const
 {
 	const char* bits = m_rgbaBits.value();
 	const char* r = strchr(bits, '.');
@@ -224,7 +245,7 @@ int MyWindow::getRedBits() const
 	return atoi(num);
 }
 
-int MyWindow::getGreenBits() const
+int PixelDbgWnd::getGreenBits() const
 {
 	const char* bits = m_rgbaBits.value();
 	const char* g = strchr(bits, '.');		
@@ -244,7 +265,7 @@ int MyWindow::getGreenBits() const
 	return atoi(num);
 }
 
-int MyWindow::getBlueBits() const
+int PixelDbgWnd::getBlueBits() const
 {
 	const char* bits = m_rgbaBits.value();
 	const char* b = strchr(bits, '.');		
@@ -270,7 +291,7 @@ int MyWindow::getBlueBits() const
 	return atoi(num);
 }
 
-int MyWindow::getAlphaBits() const
+int PixelDbgWnd::getAlphaBits() const
 {
 	const char* bits = m_rgbaBits.value();
 	const char* a = strchr(bits, '.');		
@@ -296,7 +317,7 @@ int MyWindow::getAlphaBits() const
 	return atoi(num);
 }
 
-bool MyWindow::getPixelFormat(int bitMask[4], int rgbaChannels[4], int rgbaBits[4], int& pixelSize) const
+bool PixelDbgWnd::getPixelFormat(int bitMask[4], int rgbaChannels[4], int rgbaBits[4], int& pixelSize) const
 {
 	rgbaBits[0] = getRedBits();
 	rgbaBits[1] = getGreenBits();
@@ -304,6 +325,12 @@ bool MyWindow::getPixelFormat(int bitMask[4], int rgbaChannels[4], int rgbaBits[
 	rgbaBits[3] = getAlphaBits();
 	
 	if(rgbaBits[0] <= 0 && rgbaBits[1] <= 0 && rgbaBits[2] <= 0 && rgbaBits[3] <= 0)
+	{
+		return false;
+	}
+
+	// Do not allow channel depth larger then 8 until proper handling is implemented
+	if(rgbaBits[0] > 8 || rgbaBits[1] > 8 || rgbaBits[2] > 8 || rgbaBits[3] > 8)
 	{
 		return false;
 	}
@@ -348,7 +375,7 @@ bool MyWindow::getPixelFormat(int bitMask[4], int rgbaChannels[4], int rgbaBits[
 	return pixelSize != 0 && (bpp % 8) == 0 && bpp <= 32;
 }
 
-bool MyWindow::getRGBABits(int rgbaBits[4])
+bool PixelDbgWnd::getRGBABits(int rgbaBits[4])
 {
 	int bitMask[4];
 	int rgbaChannels[4];
@@ -362,22 +389,27 @@ bool MyWindow::getRGBABits(int rgbaBits[4])
 	return false;
 }
 
-int MyWindow::getPixelSize() const
+int PixelDbgWnd::getPixelSize() const
 {
 	int bitMask[4];
 	int rgbaChannels[4];
 	int rgbaBits[4];
 	int pixelSize;
 
+	if(isPaletteMode())
+	{
+		return 1;
+	}
+
 	if(getPixelFormat(bitMask, rgbaChannels, rgbaBits, pixelSize))
 	{
 		return pixelSize;
 	}
-	
+
 	return 0;
 }
 
-bool MyWindow::updatePixelFormat(bool startup /* false */)
+bool PixelDbgWnd::updatePixelFormat(bool startup /* false */)
 {
 	int bitMask[4];
 	int rgbaChannels[4];
@@ -404,12 +436,8 @@ bool MyWindow::updatePixelFormat(bool startup /* false */)
 			int b = rgbaChannels[2];
 			int a = rgbaChannels[3];
 			
-			char buff[64];
-			memset(buff, 0, sizeof(buff));
-			snprintf(buff, sizeof(buff), "%d bpp - %.2X %.2X %.2X %.2X",
-				pixelSize * 8, bitMask[r], bitMask[g], bitMask[b], bitMask[a]);
-			
-			m_formatInfo.copy_label(buff);
+			const char* fmt = formatString("%d bpp - %.2X %.2X %.2X %.2X", pixelSize * 8, bitMask[r], bitMask[g], bitMask[b], bitMask[a]);
+			m_formatInfo.copy_label(fmt);
 			m_formatGroup.color(FL_DARK1);
 			this->redraw();
 
@@ -424,7 +452,37 @@ bool MyWindow::updatePixelFormat(bool startup /* false */)
 	return false;
 }
 
-void MyWindow::convertData(const u8* data, u32 size, u8* rgbOut, u32 tileX, u32 tileY, u8* palette /* NULL */)
+void PixelDbgWnd::updateScrollbar(u32 pos, bool resize)
+{
+	if(resize)
+	{
+		if(m_currentFileSize > 0)
+		{
+			u32 pixelSize = (u32)getPixelSize();
+			u32 offset = (u32)getOffset();
+			u32 totalBytes = m_currentFileSize;
+			u32 numVisibleBytes = std::min(getNumVisibleBytes(), totalBytes);
+
+			m_imageScroll->resize(w() - m_imageScroll->w(), 0, m_imageScroll->w(), h());
+			m_imageScroll->value(offset, 0, 0, totalBytes - numVisibleBytes);
+
+			m_imageScroll->linesize(numVisibleBytes / 4);
+			m_imageScroll->slider_size(float(numVisibleBytes) / float(totalBytes));
+		}
+		else
+		{
+			m_imageScroll->resize(w() - m_imageScroll->w(), 1, m_imageScroll->w(), h());
+			m_imageScroll->slider_size(1.0f);
+		}
+	}
+
+	if(pos != (u32)m_imageScroll->value())
+	{
+		m_imageScroll->value((int)pos);
+	}
+}
+
+void PixelDbgWnd::convertData(const u8* data, u32 size, u8* rgbOut, u32 flags /* 0 */, u32 tileX /* 0xffff */, u32 tileY /* 0xffff */, u8* palette /* NULL */)
 {	
 	int bitMask[4];
 	int rgbaChannels[4];
@@ -435,7 +493,27 @@ void MyWindow::convertData(const u8* data, u32 size, u8* rgbOut, u32 tileX, u32 
 	{
 		return;
 	}
-	
+
+	if((flags & CF_IgnoreChannelOrder) != 0)
+	{
+		int rgbaMask[4] = { bitMask[rgbaChannels[0]], bitMask[rgbaChannels[1]], bitMask[rgbaChannels[2]], bitMask[rgbaChannels[3]] };
+		bitMask[0] = rgbaMask[0];
+		bitMask[1] = rgbaMask[1];
+		bitMask[2] = rgbaMask[2];
+		bitMask[3] = rgbaMask[3];
+
+		rgbaChannels[0] = 0;
+		rgbaChannels[1] = 1;
+		rgbaChannels[2] = 2;
+		rgbaChannels[3] = 3;
+	}
+
+	// In palette mode each pixel is 1 byte wide indexing a total of 255 colors
+	if(palette)
+	{
+		ps = 1;
+	}
+
 	int bitCount[4];
 	bitCount[rgbaChannels[0]] = rgbaBits[0];
 	bitCount[rgbaChannels[1]] = rgbaBits[1];
@@ -447,6 +525,7 @@ void MyWindow::convertData(const u8* data, u32 size, u8* rgbOut, u32 tileX, u32 
 	int rdiff = 8 - bitCount[rgbaChannels[0]];
 	int gdiff = 8 - bitCount[rgbaChannels[1]];
 	int bdiff = 8 - bitCount[rgbaChannels[2]];
+	int adiff = 8 - bitCount[rgbaChannels[3]];
 	
 	// Align backwards
 	while(size % ps != 0)
@@ -455,11 +534,27 @@ void MyWindow::convertData(const u8* data, u32 size, u8* rgbOut, u32 tileX, u32 
 	}
 	
 	// Convert
-	u32 width = static_cast<u32>(getImageWidth());
-	u32 height = static_cast<u32>(getImageHeight());
-	u32 xTiles = width / tileX;
-	u32 yTiles = height / tileY;
-	u32 totalPixels = width * height;
+	bool redMasked = (flags & CF_IgnoreRedChannel) != 0;
+	bool greenMasked = (flags & CF_IgnoreGreenChannel) != 0;
+	bool blueMasked = (flags & CF_IgnoreBlueChannel) != 0;
+	bool alphaOnly = redMasked && greenMasked && blueMasked;
+	if(alphaOnly)
+	{
+		rdiff = gdiff = bdiff = adiff;
+	}
+
+	u32 width = (u32)getImageWidth();
+	u32 height = (u32)getImageHeight();
+	u32 xTiles = 1;
+	u32 yTiles = 1;
+
+	if((flags & CF_IgnoreTiles) == 0 && tileX < width && tileY < height)
+	{
+		xTiles = width / tileX;
+		yTiles = height / tileY;
+	}
+	
+	u32 totalPixels = size / ps;
 	u32 stride = width * ps;
 	u32 dest = 0;
 	u32 pixels = 0;
@@ -478,11 +573,11 @@ void MyWindow::convertData(const u8* data, u32 size, u8* rgbOut, u32 tileX, u32 
 				{
 					u32 i = (by + y) * stride + (bx + x) * ps;
 					
-					if(i >= size)
+					if(pixels >= totalPixels)
 					{
 						return;
 					}
-				
+					
 					// Read pixel byte-wise
 					u32 pixel = 0;
 					for(u32 j=0; j<ps; ++j)
@@ -491,79 +586,77 @@ void MyWindow::convertData(const u8* data, u32 size, u8* rgbOut, u32 tileX, u32 
 					}
 					
 					// Final channel values
-					u8 r = 0;
-					u8 g = 0;
-					u8 b = 0;
-					
-					if(rgbaChannels[0] >= 0 && rgbaBits[0] != 0)
+					u8 r = 0, g = 0, b = 0;
+
+					if(!palette)
 					{
-						int start = 0;
-						for(int j=0; j<rgbaChannels[0]; ++j)
+						if(alphaOnly)
 						{
-							start += bitCount[j];
-						}
-						r = pixel >> start;
-						r &= bitMask[rgbaChannels[0]];
-					}
-					
-					if(rgbaChannels[1] >= 0 && rgbaBits[1] != 0)
-					{
-						int start = 0;
-						for(int j=0; j<rgbaChannels[1]; ++j)
-						{
-							start += bitCount[j];
-						}
-						g = pixel >> start;
-						g &= bitMask[rgbaChannels[1]];
-					}
-					
-					if(rgbaChannels[2] >= 0 && rgbaBits[2] != 0)
-					{
-						int start = 0;
-						for(int j=0; j<rgbaChannels[2]; ++j)
-						{
-							start += bitCount[j];
-						}
-						b = pixel >> start;
-						b &= bitMask[rgbaChannels[2]];
-					}
-					
-					if(pixels >= totalPixels)
-					{
-						return;
-					}
-					
-					// Check for alpha-only mode explictly and replicate alpha in all channels or use palette
-					if(rgbaBits[0] == 0 && rgbaBits[1] == 0 && rgbaBits[2] == 0)
-					{
-						if(palette)
-						{
-							// Palette mode
-							rgbOut[dest+0] = palette[pixel * 3 + rgbaChannels[0]];
-							rgbOut[dest+1] = palette[pixel * 3 + rgbaChannels[1]];
-							rgbOut[dest+2] = palette[pixel * 3 + rgbaChannels[2]];
+							if(rgbaChannels[3] >= 0 && rgbaBits[3] != 0)
+							{
+								int start = 0;
+								for(int j=0; j<rgbaChannels[3]; ++j)
+								{
+									start += bitCount[j];
+								}
+								r = pixel >> start;
+								r &= bitMask[rgbaChannels[3]];
+								g = b = r;
+							}
 						}
 						else
 						{
-							// Greyscale mode
-							rgbOut[dest+0] = pixel;
-							rgbOut[dest+1] = pixel;
-							rgbOut[dest+2] = pixel;
-						}
-						
-						continue;
-					}
+							if(!redMasked && rgbaChannels[0] >= 0 && rgbaBits[0] != 0)
+							{
+								int start = 0;
+								for(int j=0; j<rgbaChannels[0]; ++j)
+								{
+									start += bitCount[j];
+								}
+								r = pixel >> start;
+								r &= bitMask[rgbaChannels[0]];
+							}
 					
-					rgbOut[dest+0] = r << rdiff;
-					rgbOut[dest+1] = g << gdiff;
-					rgbOut[dest+2] = b << bdiff;
+							if(!greenMasked && rgbaChannels[1] >= 0 && rgbaBits[1] != 0)
+							{
+								int start = 0;
+								for(int j=0; j<rgbaChannels[1]; ++j)
+								{
+									start += bitCount[j];
+								}
+								g = pixel >> start;
+								g &= bitMask[rgbaChannels[1]];
+							}
+					
+							if(!blueMasked && rgbaChannels[2] >= 0 && rgbaBits[2] != 0)
+							{
+								int start = 0;
+								for(int j=0; j<rgbaChannels[2]; ++j)
+								{
+									start += bitCount[j];
+								}
+								b = pixel >> start;
+								b &= bitMask[rgbaChannels[2]];
+							}
+						}
+
+						rgbOut[dest+0] = r << rdiff;
+						rgbOut[dest+1] = g << gdiff;
+						rgbOut[dest+2] = b << bdiff;
+					}
+					else
+					{
+						rgbOut[dest+0] = redMasked ? 0 : palette[pixel * 3 + rgbaChannels[0]];
+						rgbOut[dest+1] = greenMasked ? 0 : palette[pixel * 3 + rgbaChannels[1]];
+						rgbOut[dest+2] = blueMasked ? 0 : palette[pixel * 3 + rgbaChannels[2]];
+					}
 				}
 			}
 		}
 	}
 }
 
-void MyWindow::convertDXT(const u8* data, u32 size, u8* rgbOut, int DXTType, bool oneBitAlpha /* false */)
+void PixelDbgWnd::convertDXT(const u8* data, u32 size, u8* rgbOut, u32 flags, int DXTType, bool oneBitAlpha /* false */)
 {
 	int bitMask[4];
 	int rgbaChannels[4];
@@ -574,6 +667,11 @@ void MyWindow::convertDXT(const u8* data, u32 size, u8* rgbOut, int DXTType, boo
 	{
 		return;
 	}
+
+	bool redMasked = (flags & CF_IgnoreRedChannel) != 0;
+	bool greenMasked = (flags & CF_IgnoreGreenChannel) != 0;
+	bool blueMasked = (flags & CF_IgnoreBlueChannel) != 0;
+	bool alphaOnly = redMasked && greenMasked && blueMasked;
 	
 	u32 width = static_cast<u32>(getImageWidth());
 	u32 height = static_cast<u32>(getImageHeight());
@@ -669,9 +767,63 @@ void MyWindow::convertDXT(const u8* data, u32 size, u8* rgbOut, int DXTType, boo
 	}
 }
 
-bool MyWindow::writeBitmap(const char* filename)
+void PixelDbgWnd::convertPalette(const u8* data, u32 size, u8* rgbOut)
 {
-	if(m_data.size() <= 0 || !isValid())
+	int bitMask[4];
+	int rgbaChannels[4];
+	int rgbaBits[4];
+	int pixelSize;
+
+	if(getPixelFormat(bitMask, rgbaChannels, rgbaBits, pixelSize))
+	{
+		memset(m_palette, 0, sizeof(m_palette));
+		convertData(data, (u32)(256 * pixelSize), rgbOut, CF_IgnoreChannelOrder | CF_IgnoreTiles);
+	}
+}
+
+void PixelDbgWnd::flipVertically(int w, int h, void* data)
+{
+	if(w > 0 && h > 0 && data)
+	{
+		int stride = w * 3; // Always 24bpp
+
+		for(int y=0; y<h/2; ++y)
+		{
+			u8* src = ((u8*)data) + y * stride;
+			u8* dest = ((u8*)data) + (h - y - 1) * stride;
+			
+			for(int x=0; x<w; ++x, src+=3, dest+=3)
+			{
+				std::swap(src[0], dest[0]);
+				std::swap(src[1], dest[1]);
+				std::swap(src[2], dest[2]);
+			}
+		}
+	}
+}
+
+u32 PixelDbgWnd::readFile(const char* name, void* out, u32 size, u32 offset /* 0 */)
+{
+	FILE* f = fopen(name, "rb");
+	if(f)
+	{
+		fseek(f, 0, SEEK_END);
+		u32 filesize = (u32)ftell(f);
+		fseek(f, offset, SEEK_SET);
+
+		size = std::min(size + offset, filesize) - offset;
+		u32 count = (u32)fread(out, size, 1, f);
+		fclose(f);
+
+		return size;
+	}
+
+	return 0;
+}
+
+bool PixelDbgWnd::writeBitmap(const char* filename, int width, int height, void* data)
+{
+	if(!data || width <= 0 || height <= 0 || !isValid())
 	{
 		return false;
 	}
@@ -679,11 +831,19 @@ bool MyWindow::writeBitmap(const char* filename)
 	FILE* f = fopen(filename, "wb");
 	if(f)
 	{
-		u32 w = static_cast<u32>(getImageWidth());
-		u32 h = static_cast<u32>(getImageHeight());
+		u32 w = (u32)width;
+		u32 h = (u32)height;
 		u32 size = w * h * 3;
+		u8* pixels = (u8*)data;
+
+		flipVertically(width, height, pixels);
+
+		// Swap before saving (we have Fl_RGB_Image but need BGR order)
+		for(u32 i=0; i<size; i+=3)
+		{
+			std::swap(pixels[i+0], pixels[i+2]);
+		}
 		
-		// Create bitmap on hard disk
 		unsigned char header[54];
 		memset(header, 0, sizeof(header));
 
@@ -698,8 +858,16 @@ bool MyWindow::writeBitmap(const char* filename)
 		*reinterpret_cast<u32*>(&header[34]) = size;
 		
 		fwrite(header, sizeof(header), 1, f);
-		fwrite(m_pixels, size, 1, f);
+		fwrite(pixels, size, 1, f);
 		fclose(f);
+
+		// Swap back
+		for(u32 i=0; i<size; i+=3)
+		{
+			std::swap(pixels[i+0], pixels[i+2]);
+		}
+
+		flipVertically(width, height, data);
 		
 		return true;
 	}
@@ -707,7 +875,7 @@ bool MyWindow::writeBitmap(const char* filename)
 	return false;
 }
 
-bool MyWindow::writeTga(const char* filename)
+bool PixelDbgWnd::writeTga(const char* filename)
 {
 	if(m_data.size() <= 0 || !isValid())
 	{
@@ -744,43 +912,56 @@ bool MyWindow::writeTga(const char* filename)
 	
 	return false;
 }
+
+const char* PixelDbgWnd::formatString(const char* text, ...)
+{
+	static char buff[1024];
+	memset(buff, 0, sizeof(buff));
+
+	va_list arglist;
+	va_start(arglist, text);
+	vsnprintf(buff, sizeof(buff)-1, text, arglist);
+	va_end(arglist);
+
+	return buff;
+}
+
 	
 // static:
-void MyWindow::ButtonCallback(Fl_Widget* widget, void* param)
+void PixelDbgWnd::ButtonCallback(Fl_Widget* widget, void* param)
 {
 	if(!param)
 	{
 		return;
 	}
 	
-	MyWindow* p = static_cast<MyWindow*>(param);
-	char buff[128];
-	memset(buff, 0, sizeof(buff));
+	PixelDbgWnd* p = static_cast<PixelDbgWnd*>(param);
 	
 	if(widget == &p->m_saveButton && p->isDimValid())
 	{
 		int w = p->getImageWidth();
 		int h = p->getImageHeight();
 		int o = p->getOffset();
-		snprintf(buff, sizeof(buff), "Pixels_%dx%d_%d.tga", w, h, o);
+		const char* name = p->getCurrentFileName();
+		const char* filename = p->formatString("%s_%dx%d_%d.bmp", name ? name : "", w, h, o);
 		
-		if(!p->writeTga(buff))
+		if(!p->writeBitmap(filename, w, h, p->m_pixels))
 		{
 			fl_message("Saving failed. Either format is invalid or no data exists."); 
 		}
 	}
 	else if(widget == &p->m_openButton)
 	{
-		u32 offset = static_cast<u32>(std::max(atoi(p->m_offset.value()), 0));
+		u32 offset = (u32)std::max(atoi(p->m_offset.value()), 0);
 		Fl_Native_File_Chooser browser;
 		const char* filename = p->m_currentFile;
 		
 		// Show file dialog only if we are not in auto-reload mode
 		if(p->m_autoReload.value() == 0)
 		{
-			snprintf(buff, sizeof(buff), "Open file from offset: %d Bytes", offset);
-			
-			browser.title(buff);
+			const char* title = p->formatString("Open file from offset: %d Bytes", offset);
+
+			browser.title(title);
 			browser.type(Fl_Native_File_Chooser::BROWSE_FILE);
 			browser.filter("Any file\t*.*\n");
 			
@@ -800,10 +981,9 @@ void MyWindow::ButtonCallback(Fl_Widget* widget, void* param)
 			if(f)
 			{
 			    fseek(f, 0, SEEK_END);
-			    u32 size = static_cast<u32>(ftell(f));
-			    fseek(f, 0, SEEK_SET);
+			    p->m_currentFileSize = (u32)ftell(f);
 			    
-			    if(offset >= size)
+			    if(offset >= p->m_currentFileSize)
 			    {
 					// If auto-reload is on do nothing when pointing out of bounds
 					if(p->m_autoReload.value() != 0)
@@ -812,7 +992,7 @@ void MyWindow::ButtonCallback(Fl_Widget* widget, void* param)
 						return;
 					}
 					
-					fl_message("Offset %d larger then file size (%d Bytes). Reading from offset 0 instead.", offset, size);
+					fl_message("Offset %d larger then file size (%d Bytes). Reading from offset 0 instead.", offset, p->m_currentFileSize);
 					offset = 0;
 					p->m_accumOffset = 0;
 			    }
@@ -828,14 +1008,14 @@ void MyWindow::ButtonCallback(Fl_Widget* widget, void* param)
 			        {
 			            p->m_accumOffset = 0;
 			            p->m_offsetChanged = false;
-			        }	
+			        }
 			    }
 			    
-			    size = std::min(size - offset, kMaxImageSize);
+			    u32 size = std::min(p->m_currentFileSize - offset, kMaxImageSize);
 			    p->m_accumOffset = offset;
 			    
 			    memset(p->m_text, 0, kMaxBufferSize);
-			    fseek(f, offset, SEEK_CUR);
+			    fseek(f, offset, SEEK_SET);
 			    fread(p->m_text, size, 1, f);
 			    fclose(f);
 			    
@@ -843,7 +1023,7 @@ void MyWindow::ButtonCallback(Fl_Widget* widget, void* param)
 			    if(strcmp(filename, p->m_currentFile) != 0)
 			    {
 			        memset(p->m_currentFile, 0, sizeof(p->m_currentFile));
-			        snprintf(p->m_currentFile, sizeof(p->m_currentFile), "%s", filename);
+			        snprintf(p->m_currentFile, sizeof(p->m_currentFile)-1, "%s", filename);
 			    }
 			    
 			    // Set data and update image view
@@ -852,36 +1032,50 @@ void MyWindow::ButtonCallback(Fl_Widget* widget, void* param)
 			    
 			    // Move data cursor to data start
 			    p->m_data.position(0, 0);
-			
+				
 				// Assign new accumulation offset
 				p->m_offset.value(intToString(p->m_accumOffset));
+
+				// Update scroll bar on valid file
+				p->m_imageScroll->activate();
+				p->updateScrollbar(p->m_accumOffset, true);
+				
+				// Adjust window title
+				const char* title = p->formatString("PixelDbg %u.%u  -  %s (%u Bytes)", 
+					PixelDbgWnd::kVersionMajor, PixelDbgWnd::kVersionMinor, p->getCurrentFileName(), p->m_currentFileSize);
+				p->copy_label(title);
 			}
 		}
 	}
 	else if(widget == &p->m_aboutButton)
 	{
-		#if defined _WIN32 && defined __GNUC__
-		snprintf(buff, sizeof(buff), "PixelDbg %.2f\nNikita Kindt (n.kindt.pdbg<at>gmail.com)\nCompiled on %s with TDM-GCC %d.%d.%d", 
-				 kVersion, __DATE__, __GNUC__, __GNUC_MINOR__, __GNUC_PATCHLEVEL__);
-		#elif defined __GNUC__
-		snprintf(buff, sizeof(buff), "PixelDbg %.2f\nNikita Kindt (n.kindt.pdbg<at>gmail.com)\nCompiled on %s with g++ %d.%d.%d", 
-				 kVersion, __DATE__, __GNUC__, __GNUC_MINOR__, __GNUC_PATCHLEVEL__);
+		#if defined __GNUC__
+		#if defined _WIN32
+		const char* about = p->formatString("PixelDbg %u.%u\n\nNikita Kindt (n.kindt.pdbg<at>gmail.com)\nCompiled on %s with g++ %d.%d.%d (mingw/tdm-gcc)", 
+				 kVersionMajor, kVersionMinor, __DATE__, __GNUC__, __GNUC_MINOR__, __GNUC_PATCHLEVEL__);
+		#else
+		const char* about = p->formatString("PixelDbg %u.%u\n\nNikita Kindt (n.kindt.pdbg<at>gmail.com)\nCompiled on %s with g++ %d.%d.%d", 
+				 kVersionMajor, kVersionMinor, __DATE__, __GNUC__, __GNUC_MINOR__, __GNUC_PATCHLEVEL__);
+		#endif
+		#elif defined _MSC_VER
+		const char* about = p->formatString("PixelDbg %u.%u\n\nNikita Kindt (n.kindt.pdbg<at>gmail.com)\nCompiled on %s with MSVC %d", 
+				 kVersionMajor, kVersionMinor, __DATE__, _MSC_VER);
 		#else
 		#error Platform not supported!
 		#endif
 
-		fl_message(buff);
+		fl_message(about);
 	}
 }
 
-void MyWindow::OffsetCallback(Fl_Widget* widget, void* param)
+void PixelDbgWnd::OffsetCallback(Fl_Widget* widget, void* param)
 {
 	if(!param)
 	{
 		return;
 	}
 	
-	MyWindow* p = static_cast<MyWindow*>(param);		
+	PixelDbgWnd* p = static_cast<PixelDbgWnd*>(param);
 	p->m_offsetChanged = true;
 	
 	if(widget == &p->m_autoReload)
@@ -895,16 +1089,20 @@ void MyWindow::OffsetCallback(Fl_Widget* widget, void* param)
 			p->m_openButton.activate();
 		}
 	}
+	else if(widget == &p->m_offset)
+	{
+		ButtonCallback(&p->m_openButton, p);
+	}
 }
 
-void MyWindow::ChannelCallback(Fl_Widget* widget, void* param)
+void PixelDbgWnd::ChannelCallback(Fl_Widget* widget, void* param)
 {
 	if(!param)
 	{
 		return;
 	}
 	
-	MyWindow* p = static_cast<MyWindow*>(param);
+	PixelDbgWnd* p = static_cast<PixelDbgWnd*>(param);
 	
 	// Make sure we have a valid channel range
 	if(widget == &p->m_redChannel || widget == &p->m_greenChannel ||
@@ -921,68 +1119,120 @@ void MyWindow::ChannelCallback(Fl_Widget* widget, void* param)
 			}
 		}
 	}
-	
+
 	if(p->updatePixelFormat() && p->isValid())
 	{
+		// If in palette mode make sure to convert
+		if(p->isPaletteMode())
+		{
+			int bitMask[4];
+			int rgbaChannels[4];
+			int rgbaBits[4];
+			int pixelSize;
+			
+			p->convertPalette(p->m_rawPalette, sizeof(p->m_rawPalette), p->m_palette);
+		}
+
+		// Depending on the pixelformat conversion ratio the knob size can change
+		if(widget == &p->m_rgbaBits)
+		{
+			p->updateScrollbar(p->m_imageScroll->value(), true);
+		}
+
 		UpdateCallback(widget, param);
 	}
 }
 
-void MyWindow::DimCallback(Fl_Widget* widget, void* param)
+void PixelDbgWnd::DimCallback(Fl_Widget* widget, void* param)
 {
 	if(!param)
 	{
 		return;
 	}
 	
-	MyWindow* p = static_cast<MyWindow*>(param);
-    
-	int w = p->getImageWidth();
-	if(w != -1)
+	PixelDbgWnd* p = static_cast<PixelDbgWnd*>(param);
+
+	if(widget == &p->m_backwardButton || widget == &p->m_forwardButton)
 	{
-		int maxw = p->w() - p->m_imageBox.x() - 5;
-		if(w < 1 || w > maxw)
+		u32 offset = p->m_accumOffset;
+
+		if(widget == &p->m_backwardButton && offset > 0)
 		{
-			w = clampValue(w, 1, maxw);
-			p->m_width.value(intToString(w));
+			--offset;
+		}
+		else if(widget == &p->m_forwardButton && offset < p->m_currentFileSize)
+		{
+			++offset;
+		}
+
+		if(offset != p->m_accumOffset)
+		{
+			p->m_imageScroll->value((int)offset);
+
+			memset(p->m_pixels, 0, kMaxImageSize);
+
+ 			if(u32 size = p->readFile(p->m_currentFile, p->m_text, kMaxBufferSize, offset))
+			{
+				p->m_accumOffset = offset;
+				p->m_offset.value(intToString(offset));
+				p->m_data.static_value(reinterpret_cast<char*>(p->m_text), size);
+				p->m_data.position(0, 0);
+
+				ScrollbarCallback(p->m_imageScroll, p);	
+
+				UpdateCallback(widget, param);
+			}
 		}
 	}
+	else if(widget == &p->m_width || widget == &p->m_height)
+	{
+		int w = p->getImageWidth();
+		if(w != -1)
+		{
+			int maxw = p->w() - p->getImageBox().x() - p->m_imageScroll->w() - 6;
+			if(w < 1 || w > maxw)
+			{
+				w = clampValue(w, 1, maxw);
+				p->m_width.value(intToString(w));
+			}
+		}
 	
-	int h = p->getImageHeight();
-	if(h != -1)
-	{
-		int maxh = p->h() - p->m_imageBox.y();
-		if(h < 1 || h > maxh)
+		int h = p->getImageHeight();
+		if(h != -1)
 		{
-			h = clampValue(h, 1, maxh);
-			p->m_height.value(intToString(h));
+			int maxh = p->h() - p->getImageBox().y();
+			if(h < 1 || h > maxh)
+			{
+				h = clampValue(h, 1, maxh);
+				p->m_height.value(intToString(h));
+			}
 		}
-	}
 
-	if(w != -1 && h != -1)
-	{
-		p->m_dimGroup.color(FL_DARK1);
-		p->redraw();
-
-		if(p->updatePixelFormat())
+		if(w != -1 && h != -1)
 		{
-			UpdateCallback(widget, param);
+			p->m_dimGroup.color(FL_DARK1);
+			p->redraw();
+
+			if(p->updatePixelFormat())
+			{
+				UpdateCallback(widget, param);
+			}
 		}
-	}
-	else
-	{
-		p->m_dimGroup.color(FL_RED);
-		p->redraw();
+		else
+		{
+			p->m_dimGroup.color(FL_RED);
+			p->redraw();
+		}
 	}
 }
 
-void MyWindow::TileCallback(Fl_Widget* widget, void* param)
+void PixelDbgWnd::TileCallback(Fl_Widget* widget, void* param)
 {
 	if(!param)
 	{
 		return;
 	}
-	MyWindow* p = static_cast<MyWindow*>(param);
+	PixelDbgWnd* p = static_cast<PixelDbgWnd*>(param);
 
 	if(widget == &p->m_tile)
 	{
@@ -1027,186 +1277,178 @@ void MyWindow::TileCallback(Fl_Widget* widget, void* param)
 	}
 }
 
-void MyWindow::PaletteCallback(Fl_Widget* widget, void* param)
+void PixelDbgWnd::PaletteCallback(Fl_Widget* widget, void* param)
 {
 	if(!param)
 	{
 		return;
 	}
-	MyWindow* p = static_cast<MyWindow*>(param);
+	PixelDbgWnd* p = static_cast<PixelDbgWnd*>(param);
 	
 	if(widget == &p->m_paletteMode)
 	{
 		if(p->m_paletteMode.value() == 0)
 		{
-			p->m_randomizePalette.deactivate();
-			p->m_paletteMin.deactivate();
-			p->m_paletteMax.deactivate();
+			p->m_alphaMask.activate();
+			p->m_paletteIndices.deactivate();
+			p->m_paletteOffset.deactivate();
 			p->m_loadPalette.deactivate();
-			p->m_rgbaBits.activate();
+			p->m_savePalette.deactivate();
+
+			p->m_paletteIndices.label("Used: 0-0");
 		}
 		else
 		{
-			p->m_randomizePalette.activate();
-			p->m_paletteMin.activate();
-			p->m_paletteMax.activate();
+			p->m_alphaMask.deactivate();
+			p->m_paletteIndices.activate();
+			p->m_paletteOffset.activate();
 			p->m_loadPalette.activate();
-			
-			// Turn on 8 bpp pixel format
-			p->m_rgbaBits.value("0.0.0.8");
-			p->updatePixelFormat();
-			p->m_rgbaBits.deactivate();
+			p->m_savePalette.activate();
 		}
 		
+		p->updateScrollbar(p->m_imageScroll->value(), true);
 		UpdateCallback(widget, param);
 	}
-	else if(widget == &p->m_randomizePalette)
+	else if(widget == &p->m_loadPalette || widget == &p->m_paletteOffset)
 	{
-		int pmin = atoi(p->m_paletteMin.value());
-		int pmax = atoi(p->m_paletteMax.value());
-				
-		for(int i=0; i<256*3; i+=3)
-		{
-			int r = randomInt(pmin, pmax);
-			int g = randomInt(pmin, pmax);
-			int b = randomInt(pmin, pmax);
-			
-			p->m_palette[i+0] = r;
-			p->m_palette[i+1] = g;
-			p->m_palette[i+2] = b;
-		}
-		
-		UpdateCallback(widget, param);
-	}
-	else if(widget == &p->m_paletteMin)
-	{
-		int i = atoi(p->m_paletteMin.value());
-		if(i < 0 || i > 255)
-		{
-			i = clampValue(i, 0, 255);
-			p->m_paletteMin.value(intToString(i));
-		}
-	}
-	else if(widget == &p->m_paletteMax)
-	{
-		int i = atoi(p->m_paletteMax.value());
-		if(i < 0 || i > 255)
-		{
-			i = clampValue(i, 0, 255);
-			p->m_paletteMax.value(intToString(i));
-		}
-	}
-	else if(widget == &p->m_loadPalette)
-	{
+		u32 offset = (u32)atoi(p->m_paletteOffset.value());
+		const char* filename;
 		Fl_Native_File_Chooser browser;
-		browser.title("Load palette from file (first 768 bytes)");
-		browser.type(Fl_Native_File_Chooser::BROWSE_FILE);
-		browser.filter("Any file\t*.*\n");
-		
-		if(browser.show() == 0)
+
+		// Load from file if offset 0 otherwise read palette from current file
+		if(offset != 0)
 		{
-			// Reset palette
-			memset(p->m_palette, 0, sizeof(p->m_palette));
-			
-			const char* filename = browser.filename();
-			FILE* f = fopen(filename, "rb");
-			if(f)
+			filename = (const char*)p->m_currentFile;
+		}
+		else
+		{
+			browser.title("Load palette from file (first 768 bytes)");
+			browser.type(Fl_Native_File_Chooser::BROWSE_FILE);
+			browser.filter("Any file\t*.*\n");
+		
+			if(browser.show() == 1)
 			{
-				u32 skipBytes = 0;
-				const char* dot = strrchr(filename, '.');
-				if(dot)
+				return;
+			}
+			
+			filename = browser.filename();
+
+			// Wipe old palette
+			memset(p->m_palette, 0, sizeof(p->m_palette));
+				
+			// Check for known image files
+			const char* dot = strrchr(filename, '.');
+			if(dot)
+			{
+				u32 len = strlen(dot);
+				if(len < 5)
 				{
-					u32 len = strlen(dot);
-					if(len < 5)
+					char ext[8];
+					strcpy(ext, dot);
+					for(u32 j=1; j<len; ++j)
 					{
-						char ext[8];
-						strcpy(ext, dot);
-						for(u32 j=1; j<len; ++j)
-						{
-							ext[j] = tolower(ext[j]);
-						}
+						ext[j] = tolower(ext[j]);
+					}
 					
-						if(strstr(ext, ".bmp") == ext)
-						{
-							skipBytes = 54;
-						}
-						else if(strstr(ext, ".tga") == ext)
-						{
-							skipBytes = 12;
-						}
+					if(strstr(ext, ".bmp") == ext)
+					{
+						offset = 54;
+					}
+					else if(strstr(ext, ".tga") == ext)
+					{
+						offset = 12;
 					}
 				}
-				
-				fseek(f, 0, SEEK_END);
-			    u32 size = static_cast<u32>(ftell(f));
-			    fseek(f, skipBytes, SEEK_SET);
-			    
-			    size = clampValue<u32>(size - skipBytes, 0, sizeof(p->m_palette));
-			    fread(p->m_palette, size, 1, f);	
-				fclose(f);
-				
-				UpdateCallback(widget, param);
 			}
 		}
+
+		// Put caret at offset end
+		p->m_paletteOffset.position(25, 25);
+
+		// Read palette from given offset and convert to specified format
+		memset(p->m_rawPalette, 0, sizeof(p->m_rawPalette));
+		if(p->readFile(filename, p->m_rawPalette, sizeof(p->m_rawPalette), offset) != 0)
+		{
+			p->convertPalette(p->m_rawPalette, sizeof(p->m_rawPalette), p->m_palette);
+
+			UpdateCallback(widget, param);
+		}
+	}
+	else if(widget == &p->m_savePalette)
+	{
+		const char* name = p->getCurrentFileName();
+		int offset = p->getPaletteOffset();
+
+		const char* filename = p->formatString("%s_palette_%d.bmp", name, offset);
+		p->writeBitmap(filename, 32, 8, p->m_palette);
 	}
 }
 
-void MyWindow::DXTCallback(Fl_Widget* widget, void* param)
+void PixelDbgWnd::DXTCallback(Fl_Widget* widget, void* param)
 {
 	if(!param)
 	{
 		return;
 	}
-	MyWindow* p = static_cast<MyWindow*>(param);
+	PixelDbgWnd* p = static_cast<PixelDbgWnd*>(param);
 	
-	if(widget == &p->m_DXTStream)
+	if(widget == &p->m_DXTMode)
 	{
-		if(p->m_DXTStream.value() == 0)
+		if(!p->isDXTMode())
 		{
+			p->m_alphaMask.activate();
 			p->m_tile.activate();
 			p->m_tileX.activate();
 			p->m_tileY.activate();
-			p->m_DXT.deactivate();
+			p->m_DXTType.deactivate();
 			p->m_paletteMode.activate();
-			p->m_randomizePalette.activate();
-			p->m_paletteMin.activate();
-			p->m_paletteMax.activate();
-			p->m_loadPalette.activate();
+
+			if(p->isPaletteMode())
+			{
+				p->m_paletteIndices.activate();
+				p->m_paletteOffset.activate();
+				p->m_loadPalette.activate();
+				p->m_savePalette.activate();
+			}
 		}
 		else
 		{
+			p->m_alphaMask.deactivate();
 			p->m_tile.deactivate();
 			p->m_tileX.deactivate();
 			p->m_tileY.deactivate();
-			p->m_DXT.activate();
+			p->m_DXTType.activate();
 			p->m_paletteMode.deactivate();
-			p->m_randomizePalette.deactivate();
-			p->m_paletteMin.deactivate();
-			p->m_paletteMax.deactivate();
+			p->m_paletteIndices.deactivate();
+			p->m_paletteOffset.deactivate();
 			p->m_loadPalette.deactivate();
-			
+			p->m_savePalette.deactivate();
+
 			// Set appropriate pixel format for DXT
 			p->m_rgbaBits.value("5.6.5.0");
 		}
 		
+		p->updateScrollbar(p->m_imageScroll->value(), true);
+
 		UpdateCallback(widget, param);
 	}
-	else if(widget == &p->m_DXT)
+	else if(widget == &p->m_DXTType)
 	{
 		// Set appropriate pixel format for DXT
 		p->m_rgbaBits.value("5.6.5.0");
+		p->updateScrollbar(p->m_imageScroll->value(), true);
 		
 		UpdateCallback(widget, param);
 	}
 }
 
-void MyWindow::OpsCallback(Fl_Widget* widget, void* param)
+void PixelDbgWnd::OpsCallback(Fl_Widget* widget, void* param)
 {
 	if(!param)
 	{
 		return;
 	}
-	MyWindow* p = static_cast<MyWindow*>(param);
+	PixelDbgWnd* p = static_cast<PixelDbgWnd*>(param);
 	
 	if(widget == &p->m_colorCount)
 	{
@@ -1222,9 +1464,45 @@ void MyWindow::OpsCallback(Fl_Widget* widget, void* param)
 	}
 }
 
-void MyWindow::UpdateCallback(Fl_Widget* widget, void* param) // Callback to update image
+void PixelDbgWnd::ScrollbarCallback(Fl_Widget* widget, void* param)
 {
-	MyWindow* p = static_cast<MyWindow*>(param);
+	PixelDbgWnd* p = static_cast<PixelDbgWnd*>(param);
+	
+	if(!p || !p->isValid())
+	{
+		return;
+	}
+
+	if(widget == p->m_imageScroll)
+	{
+		u32 pos = (u32)p->m_imageScroll->value();
+		u32 offset = (u32)p->getOffset();
+		u32 numVisibleBytes = p->getNumVisibleBytes();
+
+		if(numVisibleBytes > p->m_currentFileSize || pos == p->m_currentFileSize || pos == offset)
+		{
+			return;
+		}
+
+		memset(p->m_pixels, 0, kMaxImageSize);
+
+ 		if(u32 size = p->readFile(p->m_currentFile, p->m_text, kMaxBufferSize, pos))
+		{
+			p->m_accumOffset = pos;
+			p->m_offset.value(intToString(pos));
+			p->m_data.static_value(reinterpret_cast<char*>(p->m_text), size);
+			p->m_data.position(0, 0);
+
+			p->updateScrollbar(pos, true);
+
+			UpdateCallback(widget, param);
+		}
+	}
+}
+
+void PixelDbgWnd::UpdateCallback(Fl_Widget* widget, void* param) // Callback to update image
+{
+	PixelDbgWnd* p = static_cast<PixelDbgWnd*>(param);
 
 	if(!p || !p->isValid())
 	{
@@ -1232,7 +1510,7 @@ void MyWindow::UpdateCallback(Fl_Widget* widget, void* param) // Callback to upd
 	}
 	
 	const u8* text = reinterpret_cast<const u8*>(p->m_data.value());
-	u32 length = static_cast<u32>(p->m_data.size());
+	u32 length = (u32)p->m_data.size();
 	int w = p->getImageWidth();
 	int h = p->getImageHeight();
 	int ps = p->getPixelSize();
@@ -1247,10 +1525,9 @@ void MyWindow::UpdateCallback(Fl_Widget* widget, void* param) // Callback to upd
 	}
 	
 	// Print byte count
-	char buff[64];
-	memset(buff, 0, sizeof(buff));
-	snprintf(buff, sizeof(buff), "%u/%u Bytes", length, kMaxBufferSize);
-	p->m_byteCount.copy_label(buff);
+	u32 maxVisible = std::min(p->m_currentFileSize - p->m_accumOffset, p->getNumVisibleBytes());
+	const char* byteCount = p->formatString("Visible: %.2f %%", float(maxVisible) / float(p->getNumVisibleBytes()) * 100.0f);
+	p->m_byteCount.copy_label(byteCount);
 
 	if(!text || length == 0 || ps <= 0)
 	{
@@ -1263,32 +1540,32 @@ void MyWindow::UpdateCallback(Fl_Widget* widget, void* param) // Callback to upd
 	memset(p->m_pixels, 0, size);
 	
 	// Convert data
-	if(p->m_DXTStream.value() == 0)
-	{
-		bool paletteMode = p->m_paletteMode.value() != 0;
-		length = std::min(size, length);
-		p->convertData(text, length, p->m_pixels, u32(tx), u32(ty), paletteMode ? p->m_palette : NULL);
-	}
-	else
+	u32 flags = p->getRGBAIgnoreMask();
+	if(p->isDXTMode())
 	{
 		int rgbaBits[4];
 		if(p->getRGBABits(rgbaBits))
 		{
 			int type = 1;
-			switch(p->m_DXT.value())
+			switch(p->m_DXTType.value())
 			{
 			case 0: type = 1; break;
 			case 1: type = 3; break;
 			case 2: type = 5; break;
 			}
+			
 			bool oneBitAlpha = rgbaBits[3] == 1;
-
-			p->convertDXT(text, length, p->m_pixels, type, oneBitAlpha);
+			p->convertDXT(text, length, p->m_pixels, flags, type, oneBitAlpha);
 		}
+	}
+	else
+	{
+		length = std::min(kMaxBufferSize, length);
+		p->convertData(text, length, p->m_pixels, flags, u32(tx), u32(ty), p->isPaletteMode() ? p->m_palette : NULL);
 	}
 	
 	//
-	// See if we have other ops to perform on the data (we could combine some of them to save time but maybe later):
+	// See if we have other ops to perform on the data (we could combine some of them for performance but maybe later):
 	//
 
 	// Vertical flip ?
@@ -1340,10 +1617,27 @@ void MyWindow::UpdateCallback(Fl_Widget* widget, void* param) // Callback to upd
 			}
 		}
 	
-		memset(buff, 0, sizeof(buff));
-		snprintf(buff, sizeof(buff), "Colors: %u", p->m_colorSet.size());
-		p->m_colorCount.copy_label(buff);
+		const char* colorCount = p->formatString("Colors: %u", p->m_colorSet.size());
+		p->m_colorCount.copy_label(colorCount);
 		p->m_colorSet.clear();
+	}
+
+	// Recalculate used min/max indices in palette mode
+	if(p->isPaletteMode())
+	{
+		u8 inmin = 255, inmax = 0;
+		int w = p->getImageWidth();
+		int h = p->getImageHeight();
+		const u8* data = reinterpret_cast<const u8*>(p->m_data.value());
+
+		for(u32 i=0; i<(u32)p->m_data.size(); ++i)
+		{
+			u8 index = data[i];
+			if(index < inmin) inmin = index;
+			else if(index > inmax) inmax = index;
+		}
+
+		p->m_paletteIndices.copy_label(p->formatString("Used: %u-%u", inmin, inmax));
 	}
 	
 	// Show new image
@@ -1352,9 +1646,11 @@ void MyWindow::UpdateCallback(Fl_Widget* widget, void* param) // Callback to upd
 		p->m_image->Fl_RGB_Image::~Fl_RGB_Image();
 	}
 	p->m_image = new (p->m_rawMemoryFlRGBImage) Fl_RGB_Image(p->m_pixels, w, h, 3);
-	p->m_imageBox.image(p->m_image);
-	p->m_imageBox.resize(p->m_imageBox.x(), p->m_imageBox.y(), std::min(w, p->w() - 5), h);
+	p->getImageBox().image(p->m_image);
 	
+	int newWidth = std::min(p->w() - p->m_imageScroll->w() - 5, p->w() - p->m_imageScroll->w() - 5);
+	p->getImageBox().resize(p->m_leftArea.w(), 2, p->w() - 15 - p->m_leftArea.w(), p->h() - 2);
+
 	if(widget != p)
 	{
 		// Flush main window but only if we are not resizing.

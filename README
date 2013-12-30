@@ -26,26 +26,25 @@ PixelDbg
 
 1. About
 
-PixelDbg allows you to enter or open any data stream and look at it. All data feeded to PixelDbg will be displayed in the main window with the ability to scroll through it and change
+PixelDbg allows you to open any data stream and look at it. All data feeded to PixelDbg will be displayed in the main window with the ability to scroll through it and change
 various parameters to help find or inspect images in the stream. Large unknown archives can be checked for images if they are not compressed or encrypted. Compressed or encrypted
-data can be easily discovered with noise in the image (due to high entropy). Any sort of image can be produced by simply typing image data into the application.
+data can be easily discovered with noise in the image (due to high entropy).
 
 Current features:
 
 * Rifle through gigabytes of data visually (unknown archives, OS swap files, etc.)
 * Change pixelformat, scanline, tiling, etc on the fly to find images in any data
 * Visually tell if data might be compressed, encrypted or compressable
-* Open any file for debugging or type/copy pixels directly into editbox
+* Open any file for debugging
 * Save current view as an image for later analysis
 * Successfully compiled and tested on Windows 7, Knoppix, Ubuntu and Raspbian-wheezy
 
 Current limitations:
 
-* Maximum image resolution is 1024x1024 (larger images will look distorted due to invalid scanline stride but tiling can be used here)
+* Maximum image resolution is 1024x1024
 * Window resize is clamped to maximum resolution
 * Maximum filesize is 2^32
 * Pixel format maximum is 32 bpp with no more then 8 bit per channel (i.e. valid format is 5.5.5.1 but not 9.9.9.5)
-* Only forward scrolling is supported for now (while holding CTRL and moving mouse over the image an offset is calculated)
 * PixelDbg was tested only on little-endian machines
 
 
@@ -66,7 +65,7 @@ Current limitations:
 * Execute make.sh in PixelDbg folder with the first argument being the path to extracted FLTK directory and second argument being the path to the compiled "libfltk.a".
 
   Example:
-  sh make.sh ./fltk ./fltk/bin-linux/lib
+  ./make.sh ./fltk ./fltk/bin-linux/lib
 
 
 3.1. Compile on Raspberry Pi (Raspbian Wheezy distro - 26.07.2013)

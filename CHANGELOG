@@ -1,3 +1,13 @@
+30th December 2013
+
++ Added scrolling ability + mouse wheel support
++ Added channel mask
++ Added alpha channel display for any pixel format
++ Improved support for palette mode
+* Many fixes and improvements
+
+
+
 14th November 2013
 
 + Added make.sh script to easily compile on Linux (counterpart to make.bat on Windows)
