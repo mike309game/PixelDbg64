@@ -24,6 +24,45 @@
 
 #include "main.h"
 
+//
+// Static helper functions
+//
+namespace
+{
+	const char* intToString(int i) // Base 10
+	{
+		static char s_buff[16];
+		memset(s_buff, 0, sizeof(s_buff));
+		snprintf(s_buff, sizeof(s_buff)-1, "%d", i);
+		return s_buff;
+	}
+	
+	template <typename T>
+	T clampValue(T i, T l, T h)
+	{
+		return std::min(std::max(i, l), h);
+	}
+	
+	int randomInt(int _min, int _max)
+	{
+		return (_min + (rand() % (_max - _min + 1)));
+	}
+
+	const char* formatString(const char* text, ...)
+	{
+		static char buff[1024];
+		memset(buff, 0, sizeof(buff));
+
+		va_list arglist;
+		va_start(arglist, text);
+		vsnprintf(buff, sizeof(buff)-1, text, arglist);
+		va_end(arglist);
+
+		return buff;
+	}
+};
+
+
 // Entry point:
 int main(int argc, char** argv)
 {
@@ -52,31 +91,6 @@ int main(int argc, char** argv)
 
 	return ret;
 }
-
-//
-// Static helper functions
-//
-namespace
-{
-	const char* intToString(int i) // Base 10
-	{
-		static char s_buff[16];
-		memset(s_buff, 0, sizeof(s_buff));
-		snprintf(s_buff, sizeof(s_buff)-1, "%d", i);
-		return s_buff;
-	}
-	
-	template <typename T>
-	T clampValue(T i, T l, T h)
-	{
-		return std::min(std::max(i, l), h);
-	}
-	
-	int randomInt(int _min, int _max)
-	{
-		return (_min + (rand() % (_max - _min + 1)));
-	}
-};
 
 //
 // PixelDbgWnd
@@ -913,20 +927,7 @@ bool PixelDbgWnd::writeTga(const char* filename)
 	return false;
 }
 
-const char* PixelDbgWnd::formatString(const char* text, ...)
-{
-	static char buff[1024];
-	memset(buff, 0, sizeof(buff));
 
-	va_list arglist;
-	va_start(arglist, text);
-	vsnprintf(buff, sizeof(buff)-1, text, arglist);
-	va_end(arglist);
-
-	return buff;
-}
-
-	
 // static:
 void PixelDbgWnd::ButtonCallback(Fl_Widget* widget, void* param)
 {
@@ -943,7 +944,7 @@ void PixelDbgWnd::ButtonCallback(Fl_Widget* widget, void* param)
 		int h = p->getImageHeight();
 		int o = p->getOffset();
 		const char* name = p->getCurrentFileName();
-		const char* filename = p->formatString("%s_%dx%d_%d.bmp", name ? name : "", w, h, o);
+		const char* filename = formatString("%s_%dx%d_%d.bmp", name ? name : "", w, h, o);
 		
 		if(!p->writeBitmap(filename, w, h, p->m_pixels))
 		{
@@ -959,7 +960,7 @@ void PixelDbgWnd::ButtonCallback(Fl_Widget* widget, void* param)
 		// Show file dialog only if we are not in auto-reload mode
 		if(p->m_autoReload.value() == 0)
 		{
-			const char* title = p->formatString("Open file from offset: %d Bytes", offset);
+			const char* title = formatString("Open file from offset: %d Bytes", offset);
 
 			browser.title(title);
 			browser.type(Fl_Native_File_Chooser::BROWSE_FILE);
@@ -1041,7 +1042,7 @@ void PixelDbgWnd::ButtonCallback(Fl_Widget* widget, void* param)
 				p->updateScrollbar(p->m_accumOffset, true);
 				
 				// Adjust window title
-				const char* title = p->formatString("PixelDbg %u.%u  -  %s (%u Bytes)", 
+				const char* title = formatString("PixelDbg %u.%u  -  %s (%u Bytes)", 
 					PixelDbgWnd::kVersionMajor, PixelDbgWnd::kVersionMinor, p->getCurrentFileName(), p->m_currentFileSize);
 				p->copy_label(title);
 			}
@@ -1051,14 +1052,14 @@ void PixelDbgWnd::ButtonCallback(Fl_Widget* widget, void* param)
 	{
 		#if defined __GNUC__
 		#if defined _WIN32
-		const char* about = p->formatString("PixelDbg %u.%u\n\nNikita Kindt (n.kindt.pdbg<at>gmail.com)\nCompiled on %s with g++ %d.%d.%d (mingw/tdm-gcc)", 
+		const char* about = formatString("PixelDbg %u.%u\n\nNikita Kindt (n.kindt.pdbg<at>gmail.com)\nCompiled on %s with g++ %d.%d.%d (mingw/tdm-gcc)", 
 				 kVersionMajor, kVersionMinor, __DATE__, __GNUC__, __GNUC_MINOR__, __GNUC_PATCHLEVEL__);
 		#else
-		const char* about = p->formatString("PixelDbg %u.%u\n\nNikita Kindt (n.kindt.pdbg<at>gmail.com)\nCompiled on %s with g++ %d.%d.%d", 
+		const char* about = formatString("PixelDbg %u.%u\n\nNikita Kindt (n.kindt.pdbg<at>gmail.com)\nCompiled on %s with g++ %d.%d.%d", 
 				 kVersionMajor, kVersionMinor, __DATE__, __GNUC__, __GNUC_MINOR__, __GNUC_PATCHLEVEL__);
 		#endif
 		#elif defined _MSC_VER
-		const char* about = p->formatString("PixelDbg %u.%u\n\nNikita Kindt (n.kindt.pdbg<at>gmail.com)\nCompiled on %s with MSVC %d", 
+		const char* about = formatString("PixelDbg %u.%u\n\nNikita Kindt (n.kindt.pdbg<at>gmail.com)\nCompiled on %s with MSVC %d", 
 				 kVersionMajor, kVersionMinor, __DATE__, _MSC_VER);
 		#else
 		#error Platform not supported!
@@ -1117,6 +1118,43 @@ void PixelDbgWnd::ChannelCallback(Fl_Widget* widget, void* param)
 				i = clampValue(i, 1, 4);
 				((Fl_Input*)widget)->value(intToString(i));
 			}
+		}
+	}
+
+	// Make sure that at least one channel is always enabled
+	if(widget == &p->m_redMask || widget == &p->m_greenMask || widget == &p->m_blueMask)
+	{
+		bool r = p->m_redMask.value() != 0;
+		bool g = p->m_greenMask.value() != 0;
+		bool b = p->m_blueMask.value() != 0;
+		bool a = p->m_alphaMask.value() != 0;
+
+		if(!r && !g && !b && !a)
+		{
+			if(!p->m_alphaMask.active())
+			{
+				// Keep single channel checked
+				static_cast<Fl_Check_Button*>(widget)->value(1);
+			}
+			else
+			{
+				// Activate alpha only if RGB disabled
+				p->m_alphaMask.value(1);
+			}
+		}
+	}
+	else if(widget == &p->m_alphaMask)
+	{
+		bool r = p->m_redMask.value() != 0;
+		bool g = p->m_greenMask.value() != 0;
+		bool b = p->m_blueMask.value() != 0;
+		bool a = p->m_alphaMask.value() != 0;
+
+		if(!r && !g && !b && !a)
+		{
+			p->m_redMask.value(1);
+			p->m_greenMask.value(1);
+			p->m_blueMask.value(1);
 		}
 	}
 
@@ -1379,7 +1417,7 @@ void PixelDbgWnd::PaletteCallback(Fl_Widget* widget, void* param)
 		const char* name = p->getCurrentFileName();
 		int offset = p->getPaletteOffset();
 
-		const char* filename = p->formatString("%s_palette_%d.bmp", name, offset);
+		const char* filename = formatString("%s_palette_%d.bmp", name, offset);
 		p->writeBitmap(filename, 32, 8, p->m_palette);
 	}
 }
@@ -1426,6 +1464,7 @@ void PixelDbgWnd::DXTCallback(Fl_Widget* widget, void* param)
 
 			// Set appropriate pixel format for DXT
 			p->m_rgbaBits.value("5.6.5.0");
+			p->updatePixelFormat();
 		}
 		
 		p->updateScrollbar(p->m_imageScroll->value(), true);
@@ -1436,6 +1475,7 @@ void PixelDbgWnd::DXTCallback(Fl_Widget* widget, void* param)
 	{
 		// Set appropriate pixel format for DXT
 		p->m_rgbaBits.value("5.6.5.0");
+		p->updatePixelFormat();
 		p->updateScrollbar(p->m_imageScroll->value(), true);
 		
 		UpdateCallback(widget, param);
@@ -1526,7 +1566,7 @@ void PixelDbgWnd::UpdateCallback(Fl_Widget* widget, void* param) // Callback to 
 	
 	// Print byte count
 	u32 maxVisible = std::min(p->m_currentFileSize - p->m_accumOffset, p->getNumVisibleBytes());
-	const char* byteCount = p->formatString("Visible: %.2f %%", float(maxVisible) / float(p->getNumVisibleBytes()) * 100.0f);
+	const char* byteCount = formatString("Visible: %.2f %%", float(maxVisible) / float(p->getNumVisibleBytes()) * 100.0f);
 	p->m_byteCount.copy_label(byteCount);
 
 	if(!text || length == 0 || ps <= 0)
@@ -1617,7 +1657,7 @@ void PixelDbgWnd::UpdateCallback(Fl_Widget* widget, void* param) // Callback to 
 			}
 		}
 	
-		const char* colorCount = p->formatString("Colors: %u", p->m_colorSet.size());
+		const char* colorCount = formatString("Colors: %u", p->m_colorSet.size());
 		p->m_colorCount.copy_label(colorCount);
 		p->m_colorSet.clear();
 	}
@@ -1637,7 +1677,7 @@ void PixelDbgWnd::UpdateCallback(Fl_Widget* widget, void* param) // Callback to 
 			else if(index > inmax) inmax = index;
 		}
 
-		p->m_paletteIndices.copy_label(p->formatString("Used: %u-%u", inmin, inmax));
+		p->m_paletteIndices.copy_label(formatString("Used: %u-%u", inmin, inmax));
 	}
 	
 	// Show new image

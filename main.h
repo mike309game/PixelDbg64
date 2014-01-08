@@ -193,7 +193,7 @@ public:
 		m_data.textsize(12);
 		m_data.when(FL_WHEN_CHANGED);
 		m_data.callback(UpdateCallback, this);
-		m_data.tooltip("Data that is displayed as the actual image. Different data can be inserted or deleted here like normal text.");
+		m_data.tooltip("Data in bytes that is displayed as the actual image.");
 
 		m_backwardButton.box(FL_NO_BOX);
 		m_backwardButton.when(FL_WHEN_RELEASE);
@@ -276,25 +276,25 @@ public:
 		m_redMask.value(1);
 		m_redMask.down_box(FL_DIAMOND_DOWN_BOX);
 		m_redMask.when(FL_WHEN_CHANGED);
-		m_redMask.callback(UpdateCallback, this);
+		m_redMask.callback(ChannelCallback, this);
 		m_redMask.tooltip("Enable or disable red channel.");
 
 		m_greenMask.value(1);
 		m_greenMask.down_box(FL_DIAMOND_DOWN_BOX);
 		m_greenMask.when(FL_WHEN_CHANGED);
-		m_greenMask.callback(UpdateCallback, this);
+		m_greenMask.callback(ChannelCallback, this);
 		m_greenMask.tooltip("Enable or disable green channel.");
 
 		m_blueMask.value(1);
 		m_blueMask.down_box(FL_DIAMOND_DOWN_BOX);
 		m_blueMask.when(FL_WHEN_CHANGED);
-		m_blueMask.callback(UpdateCallback, this);
+		m_blueMask.callback(ChannelCallback, this);
 		m_blueMask.tooltip("Enable or disable blue channel.");
 
-		m_alphaMask.value(1);
+		m_alphaMask.value(0);
 		m_alphaMask.down_box(FL_DIAMOND_DOWN_BOX);
 		m_alphaMask.when(FL_WHEN_CHANGED);
-		m_alphaMask.callback(UpdateCallback, this);
+		m_alphaMask.callback(ChannelCallback, this);
 		m_alphaMask.tooltip("Enable or disable alpha channel.");
 
 		m_tile.when(FL_WHEN_CHANGED);
@@ -325,13 +325,12 @@ public:
 		m_paletteMode.when(FL_WHEN_CHANGED);
 		m_paletteMode.down_box(FL_DIAMOND_DOWN_BOX);
 		m_paletteMode.callback(UpdateCallback, this);
-		m_paletteMode.tooltip("If checked, use palette to display image. Every byte acts as a look-up index (0-255) into current palette.");
+		m_paletteMode.tooltip("If checked, use palette to display image. Every byte acts as a look-up index (0-255) into current palette. Palette consists of 256 pixels with the specified pixel format.");
+		m_paletteMode.when(FL_WHEN_CHANGED);
+		m_paletteMode.callback(PaletteCallback, this);
 
 		m_paletteIndices.label("Used: 0-0");
 		m_paletteIndices.deactivate();
-		
-		m_paletteMode.when(FL_WHEN_CHANGED);
-		m_paletteMode.callback(PaletteCallback, this);
 
 		m_paletteOffset.maximum_size(m_offset.maximum_size());
 		m_paletteOffset.insert("0");
@@ -341,7 +340,7 @@ public:
 		m_paletteOffset.when(FL_WHEN_ENTER_KEY_ALWAYS);
 		m_paletteOffset.callback(PaletteCallback, this);
 		m_paletteOffset.deactivate();
-		m_paletteOffset.tooltip("Load palette from specified offset of currently loaded file.");
+		m_paletteOffset.tooltip("Specifies the offset from where a palette should be loaded. A value of 0 will load new palette from another file. A value greater 0 will load a palette from current file.");
 		
 		m_loadPalette.box(FL_THIN_UP_BOX);
 		m_loadPalette.when(FL_WHEN_RELEASE);
@@ -410,12 +409,12 @@ public:
 
 		memset(m_currentFile, 0, sizeof(m_currentFile));
 		
-		// Fill palette (use blue tint at startup)
+		// Fill palette (use green tint at startup)
 		for(int i=0; i<256; ++i)
 		{
 			int lum = 255 - i;
-			m_palette[i*3+0] = lum;
-			m_palette[i*3+1] = lum / 32;
+			m_palette[i*3+0] = lum / 32;
+			m_palette[i*3+1] = lum;
 			m_palette[i*3+2] = lum / 64;
 			m_rawPalette[i*3+0] = m_palette[i*3+0];
 			m_rawPalette[i*3+1] = m_palette[i*3+1];
@@ -459,7 +458,6 @@ public:
 	u32 readFile(const char* name, void* out, u32 size, u32 offset = 0);
 	bool writeBitmap(const char* filename, int width, int height, void* data);
 	bool writeTga(const char* filename);
-	const char* formatString(const char* text, ...);
 	
 	// Inline
 	const char* getCurrentFileName() const
