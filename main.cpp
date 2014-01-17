@@ -1,6 +1,6 @@
 /***************************************************************************
  *                                                                         *
- *   Copyright (C) 2013 Nikita Kindt (n.kindt.pdbg@gmail.com)              *
+ *   Copyright (C) 2013-2014 Nikita Kindt (n.kindt.pdbg@gmail.com)         *
  *                                                                         *
  *   File is part of PixelDbg:                                             *
  *   https://sourceforge.net/projects/pixeldbg/                            *
@@ -79,8 +79,13 @@ int main(int argc, char** argv)
 
 		PixelDbgWnd window(buff);
 		window.end();
+
+		#ifdef _WIN32
+		HANDLE hIcon = LoadImage(GetModuleHandle(0), MAKEINTRESOURCE(1001), IMAGE_ICON, 0, 0, LR_DEFAULTSIZE);
+		window.icon(hIcon);
+		#endif
+
 		window.show(argc, argv);
-	
 		ret = Fl::run();
 	}
 
@@ -123,7 +128,7 @@ void PixelDbgWnd::draw()
 
 			// Redraw image
 			// Note: Passing <this> for widget indicates that we currently resize the window and can't flush!
-			UpdateCallback(this, this);
+			RedrawCallback(this, this);
 		}
 	}
 	
@@ -141,6 +146,48 @@ int PixelDbgWnd::handle(int event)
 
 	bool insideImage = x >= getImageBox().x() && y >= getImageBox().y() && x <= r && y <= b;
 	bool ctrlDown = false;
+
+	// Handle keys on certain cotnrols for faster editing
+	if(event == FL_KEYUP)
+	{
+		int key = Fl::event_key();
+		if(key == FL_Down)
+		{
+			if(Fl::focus() == &m_paletteOffset)
+			{
+				int offset = std::max(0, atoi(m_paletteOffset.value()));
+				if(u32(offset) + 1 < m_currentFileSize)
+				{
+					m_paletteOffset.value(intToString(offset + 1));
+					PaletteCallback(&m_paletteOffset, this);
+				}
+				return 1;
+			}
+			else if(Fl::focus() == &m_data || Fl::focus() == &m_offset)
+			{
+				DimCallback(&m_forwardButton, this);
+				return 1;
+			}
+		}
+		else if(key == FL_Up)
+		{
+			if(Fl::focus() == &m_paletteOffset)
+			{
+				int offset = std::max(0, atoi(m_paletteOffset.value()));
+				if(offset - 1 > 0)
+				{
+					m_paletteOffset.value(intToString(offset - 1));
+					PaletteCallback(&m_paletteOffset, this);
+				}
+				return 1;
+			}
+			else if(Fl::focus() == &m_data || Fl::focus() == &m_offset)
+			{
+				DimCallback(&m_backwardButton, this);
+				return 1;
+			}
+		}
+	}
 
 	if(Fl::event_state() == FL_CTRL)
 	{
@@ -403,6 +450,49 @@ bool PixelDbgWnd::getRGBABits(int rgbaBits[4])
 	return false;
 }
 
+bool PixelDbgWnd::getRGBABitsFromHexString(const char* rgb, int* r /* NULL */, int* g /* NULL */, int* b /* NULL */)
+{
+	char buff[16];
+	memset(buff, 0, sizeof(buff));
+	snprintf(buff, sizeof(buff)-1, "%s", rgb);
+
+	// Check for proper formating as sscanf can be easily irritated
+	int numDots = 0;
+	int i = 0;
+	while(buff[i] != 0)
+	{
+		char& c = buff[i++];
+		if(c == '.')
+		{
+			++numDots;
+		}
+		else if(!isalnum(c))
+		{
+			return false;
+		}
+		else
+		{
+			c = tolower(c);
+			if(c > 0x66)
+			{
+				return false;
+			}
+		}
+	}
+
+	int ch[3];
+	if(numDots == 2 && sscanf(rgb, "%x.%x.%x", &ch[0], &ch[1], &ch[2]) == 3)
+	{
+		if(r) *r = ch[0] & 0xff;
+		if(g) *g = ch[1] & 0xff;
+		if(b) *b = ch[2] & 0xff;
+
+		return true;
+	}
+
+	return false;
+}
+
 int PixelDbgWnd::getPixelSize() const
 {
 	int bitMask[4];
@@ -466,6 +556,37 @@ bool PixelDbgWnd::updatePixelFormat(bool startup /* false */)
 	return false;
 }
 
+bool PixelDbgWnd::updateBitwiseOps()
+{
+	const Fl_Choice* op[] = { &m_bitwiseStage1, &m_bitwiseStage2, &m_bitwiseStage3, &m_bitwiseStage4, &m_bitwiseStage5 };
+	const Fl_Input* bits[] = { &m_bitwiseStage1Bits, &m_bitwiseStage2Bits, &m_bitwiseStage3Bits, &m_bitwiseStage4Bits, &m_bitwiseStage5Bits };
+
+	assert(m_bitwiseOpVec.size() == sizeof(op)/sizeof(op[0]) && "Size mismatch");
+	
+	int r, g, b, a;
+	for(size_t i=0; i<m_bitwiseOpVec.size(); ++i)
+	{
+		assert(op[i]->value() < 8 && "Invalid bitwise op in choice");
+
+		m_bitwiseOpVec[i].op = (BitwiseOp::Op)op[i]->value();
+
+		if(m_bitwiseOpVec[i].op != BitwiseOp::OP_NOP)
+		{
+			const char* bitsStr = bits[i]->value();
+			if(!getRGBABitsFromHexString(bitsStr, &r, &g, &b))
+			{
+				return false;
+			}
+
+			m_bitwiseOpVec[i].r = r;
+			m_bitwiseOpVec[i].g = g;
+			m_bitwiseOpVec[i].b = b;
+		}
+	}
+
+	return true;
+}
+
 void PixelDbgWnd::updateScrollbar(u32 pos, bool resize)
 {
 	if(resize)
@@ -496,14 +617,14 @@ void PixelDbgWnd::updateScrollbar(u32 pos, bool resize)
 	}
 }
 
-void PixelDbgWnd::convertData(const u8* data, u32 size, u8* rgbOut, u32 flags /* 0 */, u32 tileX /* 0xffff */, u32 tileY /* 0xffff */, u8* palette /* NULL */)
+void PixelDbgWnd::convertRaw(const u8* data, u32 size, u8* rgbOut, u32 flags /* 0 */, const std::vector<BitwiseOp>* bwOps /* NULL */, u32 tileX /* 0xffff */, u32 tileY /* 0xffff */, u8* palette /* NULL */)
 {	
 	int bitMask[4];
 	int rgbaChannels[4];
 	int rgbaBits[4];
 	int ps;
 	
-	if(!isValid() || !getPixelFormat(bitMask, rgbaChannels, rgbaBits, ps))
+	if(!isDimValid() || !getPixelFormat(bitMask, rgbaChannels, rgbaBits, ps))
 	{
 		return;
 	}
@@ -568,10 +689,10 @@ void PixelDbgWnd::convertData(const u8* data, u32 size, u8* rgbOut, u32 flags /*
 		yTiles = height / tileY;
 	}
 	
+	u32 numPixels = 0;
 	u32 totalPixels = size / ps;
 	u32 stride = width * ps;
 	u32 dest = 0;
-	u32 pixels = 0;
 	
 	for(u32 ty=0; ty<yTiles; ++ty)
 	{
@@ -583,11 +704,11 @@ void PixelDbgWnd::convertData(const u8* data, u32 size, u8* rgbOut, u32 flags /*
 			
 			for(u32 y=0; y<tileY; ++y)
 			{
-				for(u32 x=0; x<tileX; ++x, dest+=3, ++pixels)
+				for(u32 x=0; x<tileX; ++x, dest+=3, ++numPixels)
 				{
 					u32 i = (by + y) * stride + (bx + x) * ps;
 					
-					if(pixels >= totalPixels)
+					if(numPixels >= totalPixels)
 					{
 						return;
 					}
@@ -664,6 +785,55 @@ void PixelDbgWnd::convertData(const u8* data, u32 size, u8* rgbOut, u32 flags /*
 						rgbOut[dest+1] = greenMasked ? 0 : palette[pixel * 3 + rgbaChannels[1]];
 						rgbOut[dest+2] = blueMasked ? 0 : palette[pixel * 3 + rgbaChannels[2]];
 					}
+
+					if(bwOps)
+					{
+						u8& rc = rgbOut[dest+0];
+						u8& gc = rgbOut[dest+1];
+						u8& bc = rgbOut[dest+2];
+
+						for(std::vector<BitwiseOp>::const_iterator iter = bwOps->begin(); iter != bwOps->end(); ++iter)
+						{
+							switch(iter->op)
+							{
+							case BitwiseOp::OP_AND:
+								rc &= iter->r;
+								gc &= iter->g;
+								bc &= iter->b;
+								break;
+							case BitwiseOp::OP_OR:
+								rc |= iter->r;
+								gc |= iter->g;
+								bc |= iter->b;
+								break;
+							case BitwiseOp::OP_XOR:
+								rc ^= iter->r;
+								gc ^= iter->g;
+								bc ^= iter->b;
+								break;
+							case BitwiseOp::OP_SHL:
+								rc <<= iter->r;
+								gc <<= iter->g;
+								bc <<= iter->b;
+								break;
+							case BitwiseOp::OP_SHR:
+								rc >>= iter->r;
+								gc >>= iter->g;
+								bc >>= iter->b;
+								break;
+							case BitwiseOp::OP_ROL:
+								rc = (rc << std::min<u8>(iter->r, 8)) | (rc >> (8 - std::min<u8>(iter->r, 8)));
+								gc = (gc << std::min<u8>(iter->g, 8)) | (gc >> (8 - std::min<u8>(iter->g, 8)));
+								bc = (bc << std::min<u8>(iter->b, 8)) | (bc >> (8 - std::min<u8>(iter->b, 8)));
+								break;
+							case BitwiseOp::OP_ROR:
+								rc = (rc >> std::min<u8>(iter->r, 8)) | (rc << (8 - std::min<u8>(iter->r, 8)));
+								gc = (gc >> std::min<u8>(iter->g, 8)) | (gc << (8 - std::min<u8>(iter->g, 8)));
+								bc = (bc >> std::min<u8>(iter->b, 8)) | (bc << (8 - std::min<u8>(iter->b, 8)));
+								break;
+							}
+						}
+					}
 				}
 			}
 		}
@@ -677,7 +847,7 @@ void PixelDbgWnd::convertDXT(const u8* data, u32 size, u8* rgbOut, u32 flags, in
 	int rgbaBits[4];
 	int ps;
 	
-	if(!isValid() || !getPixelFormat(bitMask, rgbaChannels, rgbaBits, ps))
+	if(!isDimValid() || !getPixelFormat(bitMask, rgbaChannels, rgbaBits, ps))
 	{
 		return;
 	}
@@ -723,26 +893,32 @@ void PixelDbgWnd::convertDXT(const u8* data, u32 size, u8* rgbOut, u32 flags, in
 			u16 rgb0 = colors & 0x0000ffff;
 			u16 rgb1 = colors >> 16;
 			
-			// Decode colors to 888 format
-			int lut[4 * 5];
+			// Decode colors to 8888 format
+			int lut[4 * 6];
 			lut[0]  = ((rgb0 >> 11) << 3);
 			lut[1]  = oneBitAlpha ? ((rgb0 >> 6) << 3) & 0xff : ((rgb0 >> 5) << 2) & 0xff;
 			lut[2]  = oneBitAlpha ? ((rgb0 >> 1) << 3) & 0xff : ((rgb0 << 3) & 0xff);
-			lut[3]  = ((rgb1 >> 11) << 3);
-			lut[4]  = oneBitAlpha ? ((rgb1 >> 6) << 3) & 0xff : ((rgb1 >> 5) << 2) & 0xff;
-			lut[5]  = oneBitAlpha ? ((rgb1 >> 1) << 3) & 0xff : ((rgb1 << 3) & 0xff);
-			lut[6]  = (lut[0] * 2 + lut[3]) / 3;
-			lut[7]  = (lut[1] * 2 + lut[4]) / 3;
-			lut[8]  = (lut[2] * 2 + lut[5]) / 3;
-			lut[9]  = (lut[0] + lut[3] * 2) / 3;
-			lut[10] = (lut[1] + lut[4] * 2) / 3;
-			lut[11] = (lut[2] + lut[5] * 2) / 3;
-			lut[12] = (lut[0] + lut[3]) / 2;
-			lut[13] = (lut[1] + lut[4]) / 2;
-			lut[14] = (lut[2] + lut[5]) / 2;
-			lut[15] = 0;
-			lut[16] = 0;
-			lut[17] = 0;
+			lut[3]  = oneBitAlpha ? rgb0 << 15 : 0;
+			lut[4]  = ((rgb1 >> 11) << 3);
+			lut[5]  = oneBitAlpha ? ((rgb1 >> 6) << 3) & 0xff : ((rgb1 >> 5) << 2) & 0xff;
+			lut[6]  = oneBitAlpha ? ((rgb1 >> 1) << 3) & 0xff : ((rgb1 << 3) & 0xff);
+			lut[7]  = oneBitAlpha ? rgb1 << 15 : 0;
+			lut[8]  = (lut[0] * 2 + lut[4]) / 3;
+			lut[9]  = (lut[1] * 2 + lut[5]) / 3;
+			lut[10] = (lut[2] * 2 + lut[6]) / 3;
+			lut[11] = (lut[3] * 2 + lut[7]) / 3;
+			lut[12] = (lut[0] + lut[4] * 2) / 3;
+			lut[13] = (lut[1] + lut[5] * 2) / 3;
+			lut[14] = (lut[2] + lut[6] * 2) / 3;
+			lut[15] = (lut[3] + lut[7] * 2) / 3;
+			lut[16] = (lut[0] + lut[4]) / 2;
+			lut[17] = (lut[1] + lut[5]) / 2;
+			lut[18] = (lut[2] + lut[6]) / 2;
+			lut[19] = (lut[3] + lut[7]) / 2;
+			lut[20] = 0;
+			lut[21] = 0;
+			lut[22] = 0;
+			lut[23] = 0;
 			
 			// Read color codes
 			for(u32 c=0; c<16; ++c)
@@ -762,21 +938,76 @@ void PixelDbgWnd::convertDXT(const u8* data, u32 size, u8* rgbOut, u32 flags, in
 					{
 					case 0:
 					case 1:
-						code *= 3;
+						code *= 4;
 						break;
 					case 2:
-						code = (DXTType == 1 && rgb0 < rgb1) ? 12 : 6;
+						code = (DXTType == 1 && rgb0 < rgb1) ? 16 : 8;
 						break;
 					case 3:
-						code = (DXTType == 1 && rgb0 < rgb1) ? 15 : 9;
+						code = (DXTType == 1 && rgb0 < rgb1) ? 20 : 12;
 						break;
 					};
 					
-					rgbOut[i+0] = lut[code + rgbaChannels[2]];
-					rgbOut[i+1] = lut[code + rgbaChannels[1]];
-					rgbOut[i+2] = lut[code + rgbaChannels[0]];
+					if(alphaOnly && oneBitAlpha)
+					{
+						rgbOut[i+0] = lut[code + rgbaChannels[3]];
+						rgbOut[i+1] = lut[code + rgbaChannels[3]];
+						rgbOut[i+2] = lut[code + rgbaChannels[3]];
+					}
+					else
+					{
+						rgbOut[i+0] = lut[code + rgbaChannels[2]];
+						rgbOut[i+1] = lut[code + rgbaChannels[1]];
+						rgbOut[i+2] = lut[code + rgbaChannels[0]];
+					}
 				}
 			}
+		}
+	}
+}
+
+void PixelDbgWnd::convertRLE(const u8* data, u32 size, u8* rgbOut, u32 flags, u32 RLmask, bool RLmsb, const std::vector<BitwiseOp>* bwOps /* NULL */)
+{
+	int bitMask[4];
+	int rgbaChannels[4];
+	int rgbaBits[4];
+	int ps;
+	
+	if(!isDimValid() || !getPixelFormat(bitMask, rgbaChannels, rgbaBits, ps))
+	{
+		return;
+	}
+
+	u32 width = (u32)getImageWidth();
+	u32 height = (u32)getImageHeight();
+	u32 totalPixels = width * height;
+	u32 stride = width * ps;
+	u32 numBytes = stride * height;
+	u32 numPixels = 0;
+	u32 RLbyte = RLmsb ? ps : 0;
+	u32 RLpixel = RLmsb ? 0 : 1;
+
+	for(u32 i=0; i<size; i+=ps+1)
+	{
+		u32 len = (data[i + RLbyte] & RLmask) + 1;
+		if(numPixels + len > totalPixels)
+		{
+			len = totalPixels - numPixels;
+		}
+
+		convertRaw(data + i + RLpixel, ps, rgbOut, flags, bwOps);
+		u8* pixel = rgbOut + 3;
+		
+		for(u32 j=0; j<len; ++j, rgbOut+=3, pixel+=3, ++numPixels)
+		{
+			pixel[0] = rgbOut[0];
+			pixel[1] = rgbOut[1];
+			pixel[2] = rgbOut[2];
+		}
+
+		if(numPixels >= totalPixels)
+		{
+			break;
 		}
 	}
 }
@@ -791,7 +1022,7 @@ void PixelDbgWnd::convertPalette(const u8* data, u32 size, u8* rgbOut)
 	if(getPixelFormat(bitMask, rgbaChannels, rgbaBits, pixelSize))
 	{
 		memset(m_palette, 0, sizeof(m_palette));
-		convertData(data, (u32)(256 * pixelSize), rgbOut, CF_IgnoreChannelOrder | CF_IgnoreTiles);
+		convertRaw(data, (u32)(256 * pixelSize), rgbOut, CF_IgnoreChannelOrder | CF_IgnoreTiles);
 	}
 }
 
@@ -826,7 +1057,7 @@ u32 PixelDbgWnd::readFile(const char* name, void* out, u32 size, u32 offset /* 0
 		fseek(f, offset, SEEK_SET);
 
 		size = std::min(size + offset, filesize) - offset;
-		u32 count = (u32)fread(out, size, 1, f);
+		fread(out, size, 1, f);
 		fclose(f);
 
 		return size;
@@ -1029,7 +1260,7 @@ void PixelDbgWnd::ButtonCallback(Fl_Widget* widget, void* param)
 			    
 			    // Set data and update image view
 			    p->m_data.static_value(reinterpret_cast<char*>(p->m_text), size);
-			    UpdateCallback(&p->m_data, param);
+			    RedrawCallback(&p->m_data, param);
 			    
 			    // Move data cursor to data start
 			    p->m_data.position(0, 0);
@@ -1127,35 +1358,20 @@ void PixelDbgWnd::ChannelCallback(Fl_Widget* widget, void* param)
 		bool r = p->m_redMask.value() != 0;
 		bool g = p->m_greenMask.value() != 0;
 		bool b = p->m_blueMask.value() != 0;
-		bool a = p->m_alphaMask.value() != 0;
 
-		if(!r && !g && !b && !a)
+		if(!r && !g && !b)
 		{
-			if(!p->m_alphaMask.active())
-			{
-				// Keep single channel checked
-				static_cast<Fl_Check_Button*>(widget)->value(1);
-			}
-			else
-			{
-				// Activate alpha only if RGB disabled
-				p->m_alphaMask.value(1);
-			}
+			// Keep one channel always checked
+			static_cast<Fl_Check_Button*>(widget)->value(1);
 		}
 	}
 	else if(widget == &p->m_alphaMask)
 	{
-		bool r = p->m_redMask.value() != 0;
-		bool g = p->m_greenMask.value() != 0;
-		bool b = p->m_blueMask.value() != 0;
-		bool a = p->m_alphaMask.value() != 0;
+		int val = p->m_alphaMask.value() == 0 ? 1 : 0;
 
-		if(!r && !g && !b && !a)
-		{
-			p->m_redMask.value(1);
-			p->m_greenMask.value(1);
-			p->m_blueMask.value(1);
-		}
+		p->m_redMask.value(val);
+		p->m_greenMask.value(val);
+		p->m_blueMask.value(val);
 	}
 
 	if(p->updatePixelFormat() && p->isValid())
@@ -1177,7 +1393,7 @@ void PixelDbgWnd::ChannelCallback(Fl_Widget* widget, void* param)
 			p->updateScrollbar(p->m_imageScroll->value(), true);
 		}
 
-		UpdateCallback(widget, param);
+		RedrawCallback(widget, param);
 	}
 }
 
@@ -1218,7 +1434,7 @@ void PixelDbgWnd::DimCallback(Fl_Widget* widget, void* param)
 
 				ScrollbarCallback(p->m_imageScroll, p);	
 
-				UpdateCallback(widget, param);
+				RedrawCallback(widget, param);
 			}
 		}
 	}
@@ -1253,7 +1469,7 @@ void PixelDbgWnd::DimCallback(Fl_Widget* widget, void* param)
 
 			if(p->updatePixelFormat())
 			{
-				UpdateCallback(widget, param);
+				RedrawCallback(widget, param);
 			}
 		}
 		else
@@ -1285,7 +1501,7 @@ void PixelDbgWnd::TileCallback(Fl_Widget* widget, void* param)
 			p->m_tileY.activate();
 		}
 		
-		UpdateCallback(widget, param);
+		RedrawCallback(widget, param);
 	}
 	else if(widget == &p->m_tileX && p->isDimValid())
 	{
@@ -1298,7 +1514,7 @@ void PixelDbgWnd::TileCallback(Fl_Widget* widget, void* param)
 			p->m_tileX.value(intToString(t));
 		}
 		
-		UpdateCallback(widget, param);
+		RedrawCallback(widget, param);
 	}
 	else if(widget == &p->m_tileY && p->isDimValid())
 	{
@@ -1311,8 +1527,96 @@ void PixelDbgWnd::TileCallback(Fl_Widget* widget, void* param)
 			p->m_tileY.value(intToString(t));
 		}
 		
-		UpdateCallback(widget, param);
+		RedrawCallback(widget, param);
 	}
+}
+
+void PixelDbgWnd::BitwiseCallback(Fl_Widget* widget, void* param)
+{
+	if(!param)
+	{
+		return;
+	}
+	PixelDbgWnd* p = static_cast<PixelDbgWnd*>(param);
+	int rgba[4][5];
+
+	if(widget == &p->m_bitwiseStage1)
+	{
+		if(p->m_bitwiseStage1.value() == 0)
+		{
+			p->m_bitwiseStage1Bits.deactivate();
+		}
+		else
+		{
+			p->m_bitwiseStage1Bits.activate();
+			Fl::focus(&p->m_bitwiseStage1Bits);
+		}
+	}
+	else if(widget == &p->m_bitwiseStage2)
+	{
+		if(p->m_bitwiseStage2.value() == 0)
+		{
+			p->m_bitwiseStage2Bits.deactivate();
+		}
+		else
+		{
+			p->m_bitwiseStage2Bits.activate();
+			Fl::focus(&p->m_bitwiseStage2Bits);
+		}
+	}
+	else if(widget == &p->m_bitwiseStage3)
+	{
+		if(p->m_bitwiseStage3.value() == 0)
+		{
+			p->m_bitwiseStage3Bits.deactivate();
+		}
+		else
+		{
+			p->m_bitwiseStage3Bits.activate();
+			Fl::focus(&p->m_bitwiseStage3Bits);
+		}
+	}
+	else if(widget == &p->m_bitwiseStage4)
+	{
+		if(p->m_bitwiseStage4.value() == 0)
+		{
+			p->m_bitwiseStage4Bits.deactivate();
+		}
+		else
+		{
+			p->m_bitwiseStage4Bits.activate();
+			Fl::focus(&p->m_bitwiseStage4Bits);
+		}
+	}
+	else if(widget == &p->m_bitwiseStage5)
+	{
+		if(p->m_bitwiseStage5.value() == 0)
+		{
+			p->m_bitwiseStage5Bits.deactivate();
+		}
+		else
+		{
+			p->m_bitwiseStage5Bits.activate();
+			Fl::focus(&p->m_bitwiseStage5Bits);
+		}
+	}
+	else if(widget == &p->m_bitwiseStage1Bits || widget == &p->m_bitwiseStage2Bits ||
+		    widget == &p->m_bitwiseStage3Bits || widget == &p->m_bitwiseStage4Bits || widget == &p->m_bitwiseStage5Bits)
+	{
+		const char* hexBits = static_cast<Fl_Input*>(widget)->value();
+		if(!p->getRGBABitsFromHexString(hexBits))
+		{
+			p->m_bitwiseGroup.color(FL_RED);
+			p->m_bitwiseGroup.redraw();
+		}
+		else
+		{
+			p->m_bitwiseGroup.color(FL_DARK1);
+			p->m_bitwiseGroup.redraw();
+		}
+	}
+
+	RedrawCallback(widget, param);
 }
 
 void PixelDbgWnd::PaletteCallback(Fl_Widget* widget, void* param)
@@ -1325,13 +1629,15 @@ void PixelDbgWnd::PaletteCallback(Fl_Widget* widget, void* param)
 	
 	if(widget == &p->m_paletteMode)
 	{
-		if(p->m_paletteMode.value() == 0)
+		if(!p->isPaletteMode())
 		{
 			p->m_alphaMask.activate();
 			p->m_paletteIndices.deactivate();
 			p->m_paletteOffset.deactivate();
 			p->m_loadPalette.deactivate();
 			p->m_savePalette.deactivate();
+			p->m_DXTMode.activate();
+			p->m_RLEMode.activate();
 
 			p->m_paletteIndices.label("Used: 0-0");
 		}
@@ -1342,10 +1648,12 @@ void PixelDbgWnd::PaletteCallback(Fl_Widget* widget, void* param)
 			p->m_paletteOffset.activate();
 			p->m_loadPalette.activate();
 			p->m_savePalette.activate();
+			p->m_DXTMode.deactivate();
+			p->m_RLEMode.deactivate();
 		}
 		
 		p->updateScrollbar(p->m_imageScroll->value(), true);
-		UpdateCallback(widget, param);
+		RedrawCallback(widget, param);
 	}
 	else if(widget == &p->m_loadPalette || widget == &p->m_paletteOffset)
 	{
@@ -1409,7 +1717,7 @@ void PixelDbgWnd::PaletteCallback(Fl_Widget* widget, void* param)
 		{
 			p->convertPalette(p->m_rawPalette, sizeof(p->m_rawPalette), p->m_palette);
 
-			UpdateCallback(widget, param);
+			RedrawCallback(widget, param);
 		}
 	}
 	else if(widget == &p->m_savePalette)
@@ -1434,13 +1742,13 @@ void PixelDbgWnd::DXTCallback(Fl_Widget* widget, void* param)
 	{
 		if(!p->isDXTMode())
 		{
-			p->m_alphaMask.activate();
 			p->m_tile.activate();
-			p->m_tileX.activate();
-			p->m_tileY.activate();
-			p->m_DXTType.deactivate();
+			if(p->m_tile.value() != 0)
+			{
+				p->m_tileX.activate();
+				p->m_tileY.activate();
+			}
 			p->m_paletteMode.activate();
-
 			if(p->isPaletteMode())
 			{
 				p->m_paletteIndices.activate();
@@ -1448,28 +1756,65 @@ void PixelDbgWnd::DXTCallback(Fl_Widget* widget, void* param)
 				p->m_loadPalette.activate();
 				p->m_savePalette.activate();
 			}
+			p->m_bitwiseStage1.activate();
+			if(p->m_bitwiseStage1.value() != 0)
+			{
+				p->m_bitwiseStage1Bits.activate();
+			}
+			p->m_bitwiseStage2.activate();
+			if(p->m_bitwiseStage2.value() != 0)
+			{
+				p->m_bitwiseStage2Bits.activate();
+			}
+			p->m_bitwiseStage3.activate();
+			if(p->m_bitwiseStage3.value() != 0)
+			{
+				p->m_bitwiseStage3Bits.activate();
+			}
+			p->m_bitwiseStage4.activate();
+			if(p->m_bitwiseStage4.value() != 0)
+			{
+				p->m_bitwiseStage4Bits.activate();
+			}
+			p->m_bitwiseStage5.activate();
+			if(p->m_bitwiseStage5.value() != 0)
+			{
+				p->m_bitwiseStage5Bits.activate();
+			}
+			p->m_DXTType.deactivate();
+			p->m_RLEMode.activate();			
 		}
 		else
 		{
-			p->m_alphaMask.deactivate();
 			p->m_tile.deactivate();
 			p->m_tileX.deactivate();
 			p->m_tileY.deactivate();
-			p->m_DXTType.activate();
 			p->m_paletteMode.deactivate();
 			p->m_paletteIndices.deactivate();
 			p->m_paletteOffset.deactivate();
 			p->m_loadPalette.deactivate();
 			p->m_savePalette.deactivate();
+			p->m_bitwiseStage1.deactivate();
+			p->m_bitwiseStage1Bits.deactivate();
+			p->m_bitwiseStage2.deactivate();
+			p->m_bitwiseStage2Bits.deactivate();
+			p->m_bitwiseStage3.deactivate();
+			p->m_bitwiseStage3Bits.deactivate();
+			p->m_bitwiseStage4.deactivate();
+			p->m_bitwiseStage4Bits.deactivate();
+			p->m_bitwiseStage5.deactivate();
+			p->m_bitwiseStage5Bits.deactivate();
+			p->m_DXTType.activate();
+			p->m_RLEMode.deactivate();
 
-			// Set appropriate pixel format for DXT
+			// Set appropriate pixel format for DXT1/2/3
 			p->m_rgbaBits.value("5.6.5.0");
 			p->updatePixelFormat();
 		}
 		
 		p->updateScrollbar(p->m_imageScroll->value(), true);
 
-		UpdateCallback(widget, param);
+		RedrawCallback(widget, param);
 	}
 	else if(widget == &p->m_DXTType)
 	{
@@ -1478,7 +1823,63 @@ void PixelDbgWnd::DXTCallback(Fl_Widget* widget, void* param)
 		p->updatePixelFormat();
 		p->updateScrollbar(p->m_imageScroll->value(), true);
 		
-		UpdateCallback(widget, param);
+		RedrawCallback(widget, param);
+	}
+}
+
+void PixelDbgWnd::RLECallback(Fl_Widget* widget, void* param)
+{
+	if(!param)
+	{
+		return;
+	}
+	PixelDbgWnd* p = static_cast<PixelDbgWnd*>(param);
+	
+	if(widget == &p->m_RLEMode)
+	{
+		if(!p->isRLEMode())
+		{
+			p->m_tile.activate();
+			if(p->m_tile.value() != 0)
+			{
+				p->m_tileX.activate();
+				p->m_tileY.activate();
+			}
+			p->m_paletteMode.activate();
+			if(p->isPaletteMode())
+			{
+				p->m_paletteIndices.activate();
+				p->m_paletteOffset.activate();
+				p->m_loadPalette.activate();
+				p->m_savePalette.activate();
+			}
+
+			p->m_DXTMode.activate();
+			p->m_RLEType.deactivate();
+		}
+		else
+		{
+			p->m_tile.deactivate();
+			p->m_tileX.deactivate();
+			p->m_tileY.deactivate();
+			p->m_paletteMode.deactivate();
+			p->m_paletteIndices.deactivate();
+			p->m_paletteOffset.deactivate();
+			p->m_loadPalette.deactivate();
+			p->m_savePalette.deactivate();
+			p->m_DXTMode.deactivate();
+			p->m_RLEType.activate();
+		}
+		
+		p->updateScrollbar(p->m_imageScroll->value(), true);
+
+		RedrawCallback(widget, param);
+	}
+	else if(widget == &p->m_RLEType)
+	{
+		p->updateScrollbar(p->m_imageScroll->value(), true);
+		
+		RedrawCallback(widget, param);
 	}
 }
 
@@ -1499,7 +1900,7 @@ void PixelDbgWnd::OpsCallback(Fl_Widget* widget, void* param)
 		}
 		else
 		{
-			UpdateCallback(widget, param);
+			RedrawCallback(widget, param);
 		}
 	}
 }
@@ -1535,12 +1936,12 @@ void PixelDbgWnd::ScrollbarCallback(Fl_Widget* widget, void* param)
 
 			p->updateScrollbar(pos, true);
 
-			UpdateCallback(widget, param);
+			RedrawCallback(widget, param);
 		}
 	}
 }
 
-void PixelDbgWnd::UpdateCallback(Fl_Widget* widget, void* param) // Callback to update image
+void PixelDbgWnd::RedrawCallback(Fl_Widget* widget, void* param) // Callback to update image
 {
 	PixelDbgWnd* p = static_cast<PixelDbgWnd*>(param);
 
@@ -1578,8 +1979,16 @@ void PixelDbgWnd::UpdateCallback(Fl_Widget* widget, void* param) // Callback to 
 	u32 size = u32(w) * u32(h) * 3;
 	u32 stride = u32(w) * 3;
 	memset(p->m_pixels, 0, size);
+
+	// Update bitwise ops before passing them to convert function
+	const std::vector<BitwiseOp>* bwOps = NULL;
+	if(p->isBitwiseOpMode())
+	{
+		p->updateBitwiseOps();
+		bwOps = &p->m_bitwiseOpVec;
+	}
 	
-	// Convert data
+	// Convert data (plain, palette, DXT, RLE, ...)
 	u32 flags = p->getRGBAIgnoreMask();
 	if(p->isDXTMode())
 	{
@@ -1593,15 +2002,21 @@ void PixelDbgWnd::UpdateCallback(Fl_Widget* widget, void* param) // Callback to 
 			case 1: type = 3; break;
 			case 2: type = 5; break;
 			}
-			
-			bool oneBitAlpha = rgbaBits[3] == 1;
-			p->convertDXT(text, length, p->m_pixels, flags, type, oneBitAlpha);
+
+			p->convertDXT(text, length, p->m_pixels, flags, type, rgbaBits[3] == 1);
 		}
+	}
+	else if(p->isRLEMode())
+	{
+		u32 RLmask = p->m_RLEType.value() == 2 ? 0x7f : 0xff;
+		bool RLmsb = p->m_RLEType.value() == 1;
+
+		p->convertRLE(text, length, p->m_pixels, flags, RLmask, RLmsb, bwOps);
 	}
 	else
 	{
 		length = std::min(kMaxBufferSize, length);
-		p->convertData(text, length, p->m_pixels, flags, u32(tx), u32(ty), p->isPaletteMode() ? p->m_palette : NULL);
+		p->convertRaw(text, length, p->m_pixels, flags, bwOps, u32(tx), u32(ty), p->isPaletteMode() ? p->m_palette : NULL);
 	}
 	
 	//

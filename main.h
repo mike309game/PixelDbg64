@@ -1,6 +1,6 @@
 /***************************************************************************
  *                                                                         *
- *   Copyright (C) 2013 Nikita Kindt (n.kindt.pdbg@gmail.com)              *
+ *   Copyright (C) 2013-2014 Nikita Kindt (n.kindt.pdbg@gmail.com)         *
  *                                                                         *
  *   File is part of PixelDbg:                                             *
  *   https://sourceforge.net/projects/pixeldbg/                            *
@@ -28,7 +28,9 @@
 #define NOMINMAX
 
 #include <stdarg.h>
+#include <assert.h>
 #include <iostream>
+#include <vector>
 #include <set>
 #include <FL/Fl.H>
 #include <FL/Fl_Double_Window.H>
@@ -44,6 +46,9 @@
 #include <FL/Fl_BMP_Image.H>
 #include <FL/Fl_Native_File_Chooser.H>
 #include <FL/fl_message.H>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 typedef signed char i8;
 typedef unsigned char u8;
@@ -93,7 +98,10 @@ public:
 	static const u32 kMaxBufferSize = kMaxDim * kMaxDim * 4;
 	static const u32 kMaxImageSize = kMaxDim * kMaxDim * 3;
 	static const u32 kVersionMajor = 0;
-	static const u32 kVersionMinor = 75;
+	static const u32 kVersionMinor = 8;
+	
+	#define RECT_RIGHT(__wdg__) __wdg__.x() + __wdg__.w()
+	#define RECT_BOTTOM(__wdg__) __wdg__.y() + __wdg__.h()
 
 	enum ConvertFlags
 	{
@@ -105,14 +113,33 @@ public:
 		CF_IgnoreAlphaChannel = (1<<5)
 	};
 
+	struct BitwiseOp
+	{
+		enum Op
+		{
+			OP_NOP = 0,
+			OP_AND,
+			OP_OR,
+			OP_XOR,
+			OP_SHL,
+			OP_SHR,
+			OP_ROL,
+			OP_ROR
+		};
+
+		Op op;
+		u8 r, g, b; // bits
+	};
+
 	PixelDbgWnd(const char* text) :
 		Fl_Double_Window(881, 536, text),
 		m_leftArea(0, 0, 220, h()),
 		m_dimGroup(5, 1, 195, 91),
 		m_fileGroup(5, 95, 195, 80),
 		m_formatGroup(5, 178, 195, 124),
-		m_paletteGroup(5, 305, 195, 110),
-		m_opsGroup(5, 418, 195, 90),
+		m_paletteGroup(5, 305, 195, 108),
+		m_bitwiseGroup(5, 416, 195, 119),
+		m_opsGroup(5, 538, 195, 116),
 		m_width(120, 5, 70, 20, "Width [1, 1024]:"),
 		m_height(120, 27, 70, 20, "Height [1, 1024]:"),
 		m_data(50, 49, 140, 21, "Data:"),
@@ -136,18 +163,30 @@ public:
 		m_tile(11, 275, 47, 20, "Tile"),
 		m_tileX(78, 275, 45, 20, "X:"),
 		m_tileY(145, 275, 45, 20, "Y:"),
-		m_paletteMode(11, 308, 70, 20, "Palette"),
-		m_paletteIndices(91, 308, 105, 20, ""),
-		m_paletteOffset(110, 330, 80, 20, "From offset:"),
-		m_loadPalette(15, 355, 175, 25, "Load palette (offset / file)"),
-		m_savePalette(15, 383, 175, 25, "Save palette"),
-		m_DXTMode(11, 421, 100, 20, "Interpret as: "),
-		m_DXTType(113, 421, 75, 20),
-		m_flipV(11, 441, 110, 20, "Flip vertically"),
-		m_flipH(11, 461, 125, 20, "Flip horizontally"),
-		m_colorCount(11, 481, 150, 20, "Count colors"),
-		m_aboutButton(5, 511, 195, 23, "About"),
-		m_windowSize(this->w(), this->h()),
+		m_paletteMode(11, m_paletteGroup.y() + 4, 70, 20, "Palette"),
+		m_paletteIndices(91, m_paletteGroup.y() + 4, 105, 20, ""),
+		m_paletteOffset(110, RECT_BOTTOM(m_paletteIndices) + 2, 80, 20, "From offset:"),
+		m_loadPalette(15, RECT_BOTTOM(m_paletteOffset) + 5, 175, 25, "Load palette (offset / file)"),
+		m_savePalette(15, RECT_BOTTOM(m_loadPalette) + 2, 175, 25, "Save palette"),
+		m_bitwiseStage1(30, m_bitwiseGroup.y() + 4, 60, 20, "1."),
+		m_bitwiseStage1Bits(95, m_bitwiseGroup.y() + 4, 95, 20),
+		m_bitwiseStage2(30, RECT_BOTTOM(m_bitwiseStage1) + 2, 60, 20, "2."),
+		m_bitwiseStage2Bits(95, RECT_BOTTOM(m_bitwiseStage1) + 2, 95, 20),
+		m_bitwiseStage3(30, RECT_BOTTOM(m_bitwiseStage2) + 2, 60, 20, "3."),
+		m_bitwiseStage3Bits(95, RECT_BOTTOM(m_bitwiseStage2) + 2, 95, 20),
+		m_bitwiseStage4(30, RECT_BOTTOM(m_bitwiseStage3) + 2, 60, 20, "4."),
+		m_bitwiseStage4Bits(95, RECT_BOTTOM(m_bitwiseStage3) + 2, 95, 20),
+		m_bitwiseStage5(30, RECT_BOTTOM(m_bitwiseStage4) + 2, 60, 20, "5."),
+		m_bitwiseStage5Bits(95, RECT_BOTTOM(m_bitwiseStage4) + 2, 95, 20),
+		m_DXTMode(11, m_opsGroup.y() + 4, 100, 20, "Interpret as: "),
+		m_DXTType(113, m_opsGroup.y() + 4, 75, 20),
+		m_RLEMode(11, RECT_BOTTOM(m_DXTMode) + 2, 100, 20, "Interpret as: "),
+		m_RLEType(113, RECT_BOTTOM(m_DXTMode) + 2, 75, 20),
+		m_flipV(11, RECT_BOTTOM(m_RLEMode) + 2, 110, 20, "Flip vertically"),
+		m_flipH(11, RECT_BOTTOM(m_flipV) + 2, 125, 20, "Flip horizontally"),
+		m_colorCount(11, RECT_BOTTOM(m_flipH) + 2, 150, 20, "Count colors"),
+		m_aboutButton(5, RECT_BOTTOM(m_opsGroup) + 4, 195, 23, "About"),
+		m_windowSize(w(), h()),
 		m_cursorChanged(false),
 		m_accumOffset(0),
 		m_offsetChanged(false),
@@ -165,6 +204,8 @@ public:
 		m_fileGroup.color(FL_DARK1);
 		m_formatGroup.box(FL_ENGRAVED_BOX);
 		m_formatGroup.color(FL_DARK1);
+		m_bitwiseGroup.box(FL_ENGRAVED_BOX);
+		m_bitwiseGroup.color(FL_DARK1);
 		m_paletteGroup.box(FL_ENGRAVED_BOX);
 		m_paletteGroup.color(FL_DARK1);
 		m_opsGroup.box(FL_ENGRAVED_BOX);
@@ -192,8 +233,8 @@ public:
 		m_data.textfont(FL_COURIER);
 		m_data.textsize(12);
 		m_data.when(FL_WHEN_CHANGED);
-		m_data.callback(UpdateCallback, this);
-		m_data.tooltip("Data in bytes that is displayed as the actual image.");
+		m_data.callback(RedrawCallback, this);
+		m_data.tooltip("Data in bytes that is displayed as the actual image. Using up/down keys will reload file from previous/next offset.");
 
 		m_backwardButton.box(FL_NO_BOX);
 		m_backwardButton.when(FL_WHEN_RELEASE);
@@ -215,7 +256,7 @@ public:
 		m_offset.textsize(12);
 		m_offset.when(FL_WHEN_ENTER_KEY_ALWAYS);
 		m_offset.callback(OffsetCallback, this);
-		m_offset.tooltip("File offset to read from when opening file. Offset can be picked from the image by holding CTRL.");
+		m_offset.tooltip("File offset to read from when opening file. Offset can be picked from the image by holding CTRL. Using up/down keys will reload file from previous/next offset.");
 
 		m_saveButton.box(FL_THIN_UP_BOX);
 		m_saveButton.when(FL_WHEN_RELEASE);
@@ -227,7 +268,7 @@ public:
 		m_autoReload.down_box(FL_DIAMOND_DOWN_BOX);
 		m_autoReload.when(FL_WHEN_CHANGED);
 		m_autoReload.callback(OffsetCallback, this);
-		m_autoReload.tooltip("If checked, auto-reload current file after each offset pick (CTRL + mouse move).");
+		m_autoReload.tooltip("If checked, auto-reload current file after each offset pick (CTRL + mouse move). On a compressed data stream (i.e. S3TC/RLE) picking might be not very accurate.");
 		
 		m_redChannel.maximum_size(1);
 		m_redChannel.insert("3");
@@ -295,7 +336,7 @@ public:
 		m_alphaMask.down_box(FL_DIAMOND_DOWN_BOX);
 		m_alphaMask.when(FL_WHEN_CHANGED);
 		m_alphaMask.callback(ChannelCallback, this);
-		m_alphaMask.tooltip("Enable or disable alpha channel.");
+		m_alphaMask.tooltip("Enable or disable alpha channel. Alpha channel is replicated in RGB channels and can use same operations as normal RGB data.");
 
 		m_tile.when(FL_WHEN_CHANGED);
 		m_tile.down_box(FL_DIAMOND_DOWN_BOX);
@@ -321,10 +362,10 @@ public:
 		m_tileY.deactivate();
 		m_tileY.callback(TileCallback, this);
 		m_tileY.tooltip("Tile image in Y. Number of tiles is calculated as (height / tileY).");
-		
+	
 		m_paletteMode.when(FL_WHEN_CHANGED);
 		m_paletteMode.down_box(FL_DIAMOND_DOWN_BOX);
-		m_paletteMode.callback(UpdateCallback, this);
+		m_paletteMode.callback(RedrawCallback, this);
 		m_paletteMode.tooltip("If checked, use palette to display image. Every byte acts as a look-up index (0-255) into current palette. Palette consists of 256 pixels with the specified pixel format.");
 		m_paletteMode.when(FL_WHEN_CHANGED);
 		m_paletteMode.callback(PaletteCallback, this);
@@ -340,7 +381,7 @@ public:
 		m_paletteOffset.when(FL_WHEN_ENTER_KEY_ALWAYS);
 		m_paletteOffset.callback(PaletteCallback, this);
 		m_paletteOffset.deactivate();
-		m_paletteOffset.tooltip("Specifies the offset from where a palette should be loaded. A value of 0 will load new palette from another file. A value greater 0 will load a palette from current file.");
+		m_paletteOffset.tooltip("Specifies the offset from where a palette should be loaded. A value of 0 will load new palette from another file. A value greater 0 will load a palette from current file. Using up/down keys will reload palette from previous/next offset.");
 		
 		m_loadPalette.box(FL_THIN_UP_BOX);
 		m_loadPalette.when(FL_WHEN_RELEASE);
@@ -353,6 +394,130 @@ public:
 		m_savePalette.callback(PaletteCallback, this);
 		m_savePalette.deactivate();
 		m_savePalette.tooltip("Save current palette as 24bpp bitmap file.");
+
+		const char* bwTooltip = "Operation to be performed on incoming pixel.\n\nNOP - do nothing\n"
+							    "AND - bitwise AND (0111 AND 0101 = 0101)\n"
+								"OR  - bitwise OR (0111 OR 0101 = 0111)\n"
+								"XOR - bitwise eXclusive OR (0111 XOR 0101 = 0010)\n"
+								"SHL - SHift Left by given number (0011 SHL 1 = 0110)\n"
+								"SHR - SHift Right by given number (0011 SHR 1 = 0001)\n"
+								"ROL - ROtate Left by given number (1001 ROL 1 = 0011)\n"
+								"ROR - ROtate Right by given number (1001 ROR 1 = 1100)";
+
+		m_bitwiseStage1.textfont(FL_COURIER);
+		m_bitwiseStage1.textsize(12);
+		m_bitwiseStage1.add("NOP");
+		m_bitwiseStage1.add("AND");
+		m_bitwiseStage1.add("OR");
+		m_bitwiseStage1.add("XOR");
+		m_bitwiseStage1.add("SHL");
+		m_bitwiseStage1.add("SHR");
+		m_bitwiseStage1.add("ROL");
+		m_bitwiseStage1.add("ROR");
+		m_bitwiseStage1.value(0);
+		m_bitwiseStage1.when(FL_WHEN_CHANGED);
+		m_bitwiseStage1.callback(BitwiseCallback, this);
+		m_bitwiseStage1.tooltip(bwTooltip);
+		m_bitwiseStage1Bits.maximum_size(8);
+		m_bitwiseStage1Bits.textfont(FL_COURIER);
+		m_bitwiseStage1Bits.textsize(12);
+		m_bitwiseStage1Bits.deactivate();
+		m_bitwiseStage1Bits.value("ff.ff.ff");
+		m_bitwiseStage1Bits.when(FL_WHEN_CHANGED);
+		m_bitwiseStage1Bits.callback(BitwiseCallback, this);
+		m_bitwiseStage1Bits.tooltip("R.G.B bits in hexadecimal representation used by selected operation on incoming pixel.");
+
+		m_bitwiseStage2.textfont(FL_COURIER);
+		m_bitwiseStage2.textsize(12);
+		m_bitwiseStage2.add("NOP");
+		m_bitwiseStage2.add("AND");
+		m_bitwiseStage2.add("OR");
+		m_bitwiseStage2.add("XOR");
+		m_bitwiseStage2.add("SHL");
+		m_bitwiseStage2.add("SHR");
+		m_bitwiseStage2.add("ROL");
+		m_bitwiseStage2.add("ROR");
+		m_bitwiseStage2.value(0);
+		m_bitwiseStage2.when(FL_WHEN_CHANGED);
+		m_bitwiseStage2.callback(BitwiseCallback, this);
+		m_bitwiseStage2.tooltip(bwTooltip);
+		m_bitwiseStage2Bits.maximum_size(8);
+		m_bitwiseStage2Bits.textfont(FL_COURIER);
+		m_bitwiseStage2Bits.textsize(12);
+		m_bitwiseStage2Bits.deactivate();
+		m_bitwiseStage2Bits.value("ff.ff.ff");
+		m_bitwiseStage2Bits.when(FL_WHEN_CHANGED);
+		m_bitwiseStage2Bits.callback(BitwiseCallback, this);
+		m_bitwiseStage2Bits.tooltip("R.G.B bits in hexadecimal representation used by selected operation on incoming pixel.");
+
+		m_bitwiseStage3.textfont(FL_COURIER);
+		m_bitwiseStage3.textsize(12);
+		m_bitwiseStage3.add("NOP");
+		m_bitwiseStage3.add("AND");
+		m_bitwiseStage3.add("OR");
+		m_bitwiseStage3.add("XOR");
+		m_bitwiseStage3.add("SHL");
+		m_bitwiseStage3.add("SHR");
+		m_bitwiseStage3.add("ROL");
+		m_bitwiseStage3.add("ROR");
+		m_bitwiseStage3.value(0);
+		m_bitwiseStage3.when(FL_WHEN_CHANGED);
+		m_bitwiseStage3.callback(BitwiseCallback, this);
+		m_bitwiseStage3.tooltip(bwTooltip);
+		m_bitwiseStage3Bits.maximum_size(8);
+		m_bitwiseStage3Bits.textfont(FL_COURIER);
+		m_bitwiseStage3Bits.textsize(12);
+		m_bitwiseStage3Bits.deactivate();
+		m_bitwiseStage3Bits.value("ff.ff.ff");
+		m_bitwiseStage3Bits.when(FL_WHEN_CHANGED);
+		m_bitwiseStage3Bits.callback(BitwiseCallback, this);
+		m_bitwiseStage3Bits.tooltip("R.G.B bits in hexadecimal representation used by selected operation on incoming pixel.");
+
+		m_bitwiseStage4.textfont(FL_COURIER);
+		m_bitwiseStage4.textsize(12);
+		m_bitwiseStage4.add("NOP");
+		m_bitwiseStage4.add("AND");
+		m_bitwiseStage4.add("OR");
+		m_bitwiseStage4.add("XOR");
+		m_bitwiseStage4.add("SHL");
+		m_bitwiseStage4.add("SHR");
+		m_bitwiseStage4.add("ROL");
+		m_bitwiseStage4.add("ROR");
+		m_bitwiseStage4.value(0);
+		m_bitwiseStage4.when(FL_WHEN_CHANGED);
+		m_bitwiseStage4.callback(BitwiseCallback, this);
+		m_bitwiseStage4.tooltip(bwTooltip);
+		m_bitwiseStage4Bits.maximum_size(8);
+		m_bitwiseStage4Bits.textfont(FL_COURIER);
+		m_bitwiseStage4Bits.textsize(12);
+		m_bitwiseStage4Bits.deactivate();
+		m_bitwiseStage4Bits.value("ff.ff.ff");
+		m_bitwiseStage4Bits.when(FL_WHEN_CHANGED);
+		m_bitwiseStage4Bits.callback(BitwiseCallback, this);
+		m_bitwiseStage4Bits.tooltip("R.G.B bits in hexadecimal representation used by selected operation on incoming pixel.");
+
+		m_bitwiseStage5.textfont(FL_COURIER);
+		m_bitwiseStage5.textsize(12);
+		m_bitwiseStage5.add("NOP");
+		m_bitwiseStage5.add("AND");
+		m_bitwiseStage5.add("OR");
+		m_bitwiseStage5.add("XOR");
+		m_bitwiseStage5.add("SHL");
+		m_bitwiseStage5.add("SHR");
+		m_bitwiseStage5.add("ROL");
+		m_bitwiseStage5.add("ROR");
+		m_bitwiseStage5.value(0);
+		m_bitwiseStage5.when(FL_WHEN_CHANGED);
+		m_bitwiseStage5.callback(BitwiseCallback, this);
+		m_bitwiseStage5.tooltip(bwTooltip);
+		m_bitwiseStage5Bits.maximum_size(8);
+		m_bitwiseStage5Bits.textfont(FL_COURIER);
+		m_bitwiseStage5Bits.textsize(12);
+		m_bitwiseStage5Bits.deactivate();
+		m_bitwiseStage5Bits.value("ff.ff.ff");
+		m_bitwiseStage5Bits.when(FL_WHEN_CHANGED);
+		m_bitwiseStage5Bits.callback(BitwiseCallback, this);
+		m_bitwiseStage5Bits.tooltip("R.G.B bits in hexadecimal representation used by selected operation on incoming pixel.");
 
 		m_DXTMode.when(FL_WHEN_CHANGED);
 		m_DXTMode.down_box(FL_DIAMOND_DOWN_BOX);
@@ -368,15 +533,33 @@ public:
 		m_DXTType.when(FL_WHEN_CHANGED);
 		m_DXTType.callback(DXTCallback, this);
 		m_DXTType.deactivate();
+		m_DXTType.tooltip("Supported DXT modes. Alpha is ignored on DXT3 and DXT5. DXT1 can be used with 5.5.5.1 to show 1-bit alpha.");
+
+		m_RLEMode.when(FL_WHEN_CHANGED);
+		m_RLEMode.down_box(FL_DIAMOND_DOWN_BOX);
+		m_RLEMode.callback(RLECallback, this);
+		m_RLEMode.tooltip("If checked, interpret data stream as RLE compressed. Last or first byte always represents the run length and following or preceding bytes hold the pixel color as described by the pixel format."
+			              " RLE compressed stream doesn't work well with picking and scroll bar length.");
 		
+		m_RLEType.textfont(FL_COURIER);
+		m_RLEType.textsize(12);
+		m_RLEType.add("RLE");
+		m_RLEType.add("RLE (MSB)");
+		m_RLEType.add("RLE (TGA)");
+		m_RLEType.value(0);
+		m_RLEType.when(FL_WHEN_CHANGED);
+		m_RLEType.callback(RLECallback, this);
+		m_RLEType.deactivate();
+		m_RLEType.tooltip("Supported RLE modes. If MSB is set run length is read from most significant byte otherwise from least significant byte. TGA mode always removes the most significant bit from the run length byte.");
+
 		m_flipV.when(FL_WHEN_CHANGED);
 		m_flipV.down_box(FL_DIAMOND_DOWN_BOX);
-		m_flipV.callback(UpdateCallback, this);
+		m_flipV.callback(RedrawCallback, this);
 		m_flipV.tooltip("If checked, flip vertically on each redraw. Top/left image origin will be located at bottom/left instead (affects picking mode).");
 		
 		m_flipH.when(FL_WHEN_CHANGED);
 		m_flipH.down_box(FL_DIAMOND_DOWN_BOX);
-		m_flipH.callback(UpdateCallback, this);
+		m_flipH.callback(RedrawCallback, this);
 		m_flipH.tooltip("If checked, flip horizontally on each redraw. Top/left image origin will be located at top/right instead (affects picking mode).");
 		
 		m_colorCount.when(FL_WHEN_CHANGED);
@@ -421,6 +604,14 @@ public:
 			m_rawPalette[i*3+2] = m_palette[i*3+2];
 			m_rawPalette[i*3+3] = 0;
 		}
+
+		// Create a pixel pipeline with 5 bitwise ops
+		m_bitwiseOpVec.reserve(5);
+		m_bitwiseOpVec.push_back(BitwiseOp());
+		m_bitwiseOpVec.push_back(BitwiseOp());
+		m_bitwiseOpVec.push_back(BitwiseOp());
+		m_bitwiseOpVec.push_back(BitwiseOp());
+		m_bitwiseOpVec.push_back(BitwiseOp());
 	}
 	
 	~PixelDbgWnd()
@@ -448,11 +639,14 @@ public:
 	int getAlphaBits() const;
 	bool getPixelFormat(int bitMask[4], int rgbaChannels[4], int rgbaBits[4], int& pixelSize) const;
 	bool getRGBABits(int rgbaBits[4]);
+	bool getRGBABitsFromHexString(const char* rgb, int* r = NULL, int* g = NULL, int* b = NULL);
 	int getPixelSize() const;
 	bool updatePixelFormat(bool startup = false);
+	bool updateBitwiseOps();
 	void updateScrollbar(u32 pos, bool resize);
-	void convertData(const u8* data, u32 size, u8* rgbOut, u32 flags = 0, u32 tileX = 0xffff, u32 tileY = 0xffff, u8* palette = NULL);
+	void convertRaw(const u8* data, u32 size, u8* rgbOut, u32 flags = 0, const std::vector<BitwiseOp>* bwOps = NULL, u32 tileX = 0xffff, u32 tileY = 0xffff, u8* palette = NULL);
 	void convertDXT(const u8* data, u32 size, u8* rgbOut, u32 flags, int DXTType, bool oneBitAlpha = false);
+	void convertRLE(const u8* data, u32 size, u8* rgbOut, u32 flags, u32 RLmask, bool RLmsb, const std::vector<BitwiseOp>* bwOps = NULL);
 	void convertPalette(const u8* data, u32 size, u8* rgbOut);
 	void flipVertically(int w, int h, void* data);
 	u32 readFile(const char* name, void* out, u32 size, u32 offset = 0);
@@ -537,6 +731,16 @@ public:
 		return flags;
 	}
 
+	bool isBitwiseOpMode() const
+	{
+		bool stage1 = m_bitwiseStage1.value() != 0;
+		bool stage2 = m_bitwiseStage2.value() != 0;
+		bool stage3 = m_bitwiseStage3.value() != 0;
+		bool stage4 = m_bitwiseStage4.value() != 0;
+		bool stage5 = m_bitwiseStage5.value() != 0;
+		return stage1 || stage2 || stage3 || stage4 || stage5;
+	}
+
 	bool isPaletteMode() const
 	{
 		return m_paletteMode.value() != 0;
@@ -545,6 +749,11 @@ public:
 	bool isDXTMode() const
 	{
 		return m_DXTMode.value() != 0;
+	}
+
+	bool isRLEMode() const
+	{
+		return m_RLEMode.value() != 0;
 	}
 
 	Fl_Box& getImageBox() const
@@ -558,18 +767,21 @@ private:
 	static void ChannelCallback(Fl_Widget* widget, void* param);
 	static void DimCallback(Fl_Widget* widget, void* param);
 	static void TileCallback(Fl_Widget* widget, void* param);
+	static void BitwiseCallback(Fl_Widget* widget, void* param);
 	static void PaletteCallback(Fl_Widget* widget, void* param);
 	static void DXTCallback(Fl_Widget* widget, void* param);
+	static void RLECallback(Fl_Widget* widget, void* param);
 	static void OpsCallback(Fl_Widget* widget, void* param);
 	static void ScrollbarCallback(Fl_Widget* widget, void* param);
-	static void UpdateCallback(Fl_Widget* widget, void* param);
+	static void RedrawCallback(Fl_Widget* widget, void* param);
 
-public:
+	// UI controls
 	Fl_Scroll m_leftArea;
 	Fl_Box m_dimGroup;
 	Fl_Box m_fileGroup;
 	Fl_Box m_formatGroup;
 	Fl_Box m_paletteGroup;
+	Fl_Box m_bitwiseGroup;
 	Fl_Box m_opsGroup;
 	Fl_Input m_width;
 	Fl_Input m_height;
@@ -599,8 +811,20 @@ public:
 	Fl_Input m_paletteOffset;
 	Fl_Button m_loadPalette;
 	Fl_Button m_savePalette;
+	Fl_Choice m_bitwiseStage1;
+	Fl_Input m_bitwiseStage1Bits;
+	Fl_Choice m_bitwiseStage2;
+	Fl_Input m_bitwiseStage2Bits;
+	Fl_Choice m_bitwiseStage3;
+	Fl_Input m_bitwiseStage3Bits;
+	Fl_Choice m_bitwiseStage4;
+	Fl_Input m_bitwiseStage4Bits;
+	Fl_Choice m_bitwiseStage5;
+	Fl_Input m_bitwiseStage5Bits;
 	Fl_Check_Button m_DXTMode;
 	Fl_Choice m_DXTType;
+	Fl_Check_Button m_RLEMode;
+	Fl_Choice m_RLEType;
 	Fl_Check_Button m_flipV;
 	Fl_Check_Button m_flipH;
 	Fl_Check_Button m_colorCount;
@@ -610,9 +834,10 @@ public:
 	Fl_Scrollbar* m_imageScroll;
 	Fl_RGB_Image* m_image;
 	
+	// Data
+	Point2D<int> m_windowSize; // Cached size for resize checks
 	u8* m_pixels; // Displayed pixel data in main window
 	char* m_text; // Data text full size (to avoid memory reallocs)
-	Point2D<int> m_windowSize; // Cached size for resize checks
 	bool m_cursorChanged;
 	u32 m_accumOffset;
 	bool m_offsetChanged;
@@ -622,6 +847,7 @@ public:
 	char m_rawMemoryFlRGBImage[sizeof(Fl_RGB_Image)];
 	u8 m_palette[256 * 3];
 	u8 m_rawPalette[256 * 4];
+	std::vector<BitwiseOp> m_bitwiseOpVec;
 	std::set<u32> m_colorSet;
 };
 

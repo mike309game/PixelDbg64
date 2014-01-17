@@ -1,3 +1,14 @@
+12th January 2014
+
++ Added bitwise - 5 stages pipeline to modify pixels before they are displayed
++ Added RLE support (raw, MSB, TGA)
++ Added up/down keys on some controls for easier file reloading (data and palette)
++ Added window icon on Windows platforms
+* Fixed DXT1 1-bit alpha display which wasn't working in last version
+* Minor fixes
+
+
+
 30th December 2013
 
 + Added scrolling ability + mouse wheel support
