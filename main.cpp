@@ -87,7 +87,7 @@ namespace
 		if (pos+size > first+total) total = pos+size-first;
 		slider->slider_size(size >= total ? 1.0 : size/total);
 		slider->bounds(first, total-size+first);
-		return slider->value(pos);
+		return slider->Fl_Valuator::value(pos);
 	}
 };
 
