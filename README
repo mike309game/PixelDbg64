@@ -45,6 +45,7 @@ Current limitations:
 * Window resize is clamped to maximum resolution
 * Pixel format maximum is 32 bpp with no more then 8 bit per channel (i.e. valid format is 5.5.5.1 but not 9.9.9.5)
 * RLE mode is unpredictable in compression ratio, scrollbar can misbehave
+* Scrollbar buttons will wrap back to offset 0 when offset is >2GB. This is an FLTK issue.
 * PixelDbg was tested only on little-endian machines
 
 
