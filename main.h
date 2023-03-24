@@ -57,6 +57,8 @@ typedef unsigned short u16;
 typedef signed int i32;
 typedef unsigned int u32;
 
+#define IS64BIT (INTPTR_MAX == INT64_MAX)
+
 #ifdef _MSC_VER
 #define snprintf _snprintf
 #endif
@@ -94,11 +96,11 @@ public:
 class PixelDbgWnd : public Fl_Double_Window
 {
 public:
-	static const u32 kMaxDim = 1024;
-	static const u32 kMaxBufferSize = kMaxDim * kMaxDim * 4;
-	static const u32 kMaxImageSize = kMaxDim * kMaxDim * 3;
-	static const u32 kVersionMajor = 0;
-	static const u32 kVersionMinor = 8;
+	static const u32 kMaxDim;
+	static const u32 kMaxBufferSize;
+	static const u32 kMaxImageSize;
+	static const u32 kVersionMajor;
+	static const u32 kVersionMinor;
 	
 	#define RECT_RIGHT(__wdg__) __wdg__.x() + __wdg__.w()
 	#define RECT_BOTTOM(__wdg__) __wdg__.y() + __wdg__.h()
@@ -249,7 +251,7 @@ public:
 		m_byteCount.labelsize(11);
 		m_byteCount.label("Visible: 0.00 %");
 		
-		m_offset.maximum_size(10);
+		m_offset.maximum_size(0xFF);
 		m_offset.insert("0");
 		m_offset.type(FL_INT_INPUT);
 		m_offset.textfont(FL_COURIER);
@@ -643,13 +645,13 @@ public:
 	int getPixelSize() const;
 	bool updatePixelFormat(bool startup = false);
 	bool updateBitwiseOps();
-	void updateScrollbar(u32 pos, bool resize);
+	void updateScrollbar(off_t pos, bool resize);
 	void convertRaw(const u8* data, u32 size, u8* rgbOut, u32 flags = 0, const std::vector<BitwiseOp>* bwOps = NULL, u32 tileX = 0xffff, u32 tileY = 0xffff, u8* palette = NULL);
 	void convertDXT(const u8* data, u32 size, u8* rgbOut, u32 flags, int DXTType, bool oneBitAlpha = false);
 	void convertRLE(const u8* data, u32 size, u8* rgbOut, u32 flags, u32 RLmask, bool RLmsb, const std::vector<BitwiseOp>* bwOps = NULL);
 	void convertPalette(const u8* data, u32 size, u8* rgbOut);
 	void flipVertically(int w, int h, void* data);
-	u32 readFile(const char* name, void* out, u32 size, u32 offset = 0);
+	size_t readFile(const char* name, void* out, size_t size, off_t offset = 0);
 	bool writeBitmap(const char* filename, int width, int height, void* data);
 	bool writeTga(const char* filename);
 	
@@ -692,14 +694,22 @@ public:
 		return value && value[0] != 0 ? atoi(value) : -1;
 	}
 	
-	int getOffset() const
+	off_t getOffset() const
 	{
+		#if IS64BIT
+		return atoll(m_offset.value());
+		#else
 		return atoi(m_offset.value());
+		#endif
 	}
 
-	int getPaletteOffset() const
+	off_t getPaletteOffset() const
 	{
+		#if IS64BIT
+		return atoll(m_paletteOffset.value());
+		#else
 		return atoi(m_paletteOffset.value());
+		#endif
 	}
 
 	u32 getNumVisibleBytes() const
@@ -839,11 +849,11 @@ private:
 	u8* m_pixels; // Displayed pixel data in main window
 	char* m_text; // Data text full size (to avoid memory reallocs)
 	bool m_cursorChanged;
-	u32 m_accumOffset;
+	off_t m_accumOffset;
 	bool m_offsetChanged;
 	char m_offsetText[32]; // To avoid memory allocs
-	char m_currentFile[260];
-	u32 m_currentFileSize;
+	char m_currentFile[0x7FFF];
+	size_t m_currentFileSize;
 	char m_rawMemoryFlRGBImage[sizeof(Fl_RGB_Image)];
 	u8 m_palette[256 * 3];
 	u8 m_rawPalette[256 * 4];

@@ -22,7 +22,14 @@
  *                                                                         *
  ***************************************************************************/
 
+#include <cmath>
 #include "main.h"
+
+const u32 PixelDbgWnd::kMaxDim = 1024;
+const u32 PixelDbgWnd::kMaxBufferSize = kMaxDim * kMaxDim * 4;
+const u32 PixelDbgWnd::kMaxImageSize = kMaxDim * kMaxDim * 3;
+const u32 PixelDbgWnd::kVersionMajor = 0;
+const u32 PixelDbgWnd::kVersionMinor = 8;
 
 //
 // Static helper functions
@@ -34,6 +41,18 @@ namespace
 		static char s_buff[16];
 		memset(s_buff, 0, sizeof(s_buff));
 		snprintf(s_buff, sizeof(s_buff)-1, "%d", i);
+		return s_buff;
+	}
+	
+	const char* offsetToString(off_t i) // Base 10
+	{
+		static char s_buff[64];
+		memset(s_buff, 0, sizeof(s_buff));
+		#if IS64BIT
+		snprintf(s_buff, sizeof(s_buff)-1, "%lld", i);
+		#else
+		snprintf(s_buff, sizeof(s_buff)-1, "%d", i);
+		#endif
 		return s_buff;
 	}
 	
@@ -59,6 +78,16 @@ namespace
 		va_end(arglist);
 
 		return buff;
+	}
+	
+	//Since FLTK doesn't expose any method to scroll the scrollbar with doubles, we just
+	//make our own
+	double scrollValueDouble(Fl_Slider* slider, double pos, double size, double first, double total) {
+		slider->step(1, 1);
+		if (pos+size > first+total) total = pos+size-first;
+		slider->slider_size(size >= total ? 1.0 : size/total);
+		slider->bounds(first, total-size+first);
+		return slider->value(pos);
 	}
 };
 
@@ -122,7 +151,7 @@ void PixelDbgWnd::draw()
 			imageh = clampValue(imageh + deltah, 1, (int)kMaxDim);
 			m_height.value(intToString(imageh));
 
-			updateScrollbar(m_imageScroll->value(), true);
+			updateScrollbar(m_imageScroll->Fl_Valuator::value(), true);
 
 			m_leftArea.size(220, h);
 
@@ -155,10 +184,10 @@ int PixelDbgWnd::handle(int event)
 		{
 			if(Fl::focus() == &m_paletteOffset)
 			{
-				int offset = std::max(0, atoi(m_paletteOffset.value()));
-				if(u32(offset) + 1 < m_currentFileSize)
+				off_t offset = std::max((off_t)0, getPaletteOffset());
+				if(offset + 1 < m_currentFileSize)
 				{
-					m_paletteOffset.value(intToString(offset + 1));
+					m_paletteOffset.value(offsetToString(offset + 1));
 					PaletteCallback(&m_paletteOffset, this);
 				}
 				return 1;
@@ -173,10 +202,10 @@ int PixelDbgWnd::handle(int event)
 		{
 			if(Fl::focus() == &m_paletteOffset)
 			{
-				int offset = std::max(0, atoi(m_paletteOffset.value()));
+				off_t offset = std::max((off_t)0, getPaletteOffset());
 				if(offset - 1 > 0)
 				{
-					m_paletteOffset.value(intToString(offset - 1));
+					m_paletteOffset.value(offsetToString(offset - 1));
 					PaletteCallback(&m_paletteOffset, this);
 				}
 				return 1;
@@ -275,7 +304,7 @@ int PixelDbgWnd::handle(int event)
 		}
 
 		memset(m_offsetText, 0, sizeof(m_offsetText));
-		snprintf(m_offsetText, sizeof(m_offsetText)-1, "%s", intToString(m_accumOffset + offset));
+		snprintf(m_offsetText, sizeof(m_offsetText)-1, "%s", offsetToString(m_accumOffset + offset));
 		m_offset.value(m_offsetText);
 	}
 	
@@ -587,22 +616,23 @@ bool PixelDbgWnd::updateBitwiseOps()
 	return true;
 }
 
-void PixelDbgWnd::updateScrollbar(u32 pos, bool resize)
+void PixelDbgWnd::updateScrollbar(off_t pos, bool resize)
 {
 	if(resize)
 	{
 		if(m_currentFileSize > 0)
 		{
 			u32 pixelSize = (u32)getPixelSize();
-			u32 offset = (u32)getOffset();
-			u32 totalBytes = m_currentFileSize;
-			u32 numVisibleBytes = std::min(getNumVisibleBytes(), totalBytes);
+			off_t offset = getOffset();
+			size_t totalBytes = m_currentFileSize;
+			size_t numVisibleBytes = std::min((size_t)getNumVisibleBytes(), totalBytes);
 
 			m_imageScroll->resize(w() - m_imageScroll->w(), 0, m_imageScroll->w(), h());
-			m_imageScroll->value(offset, 0, 0, totalBytes - numVisibleBytes);
+			//m_imageScroll->value(offset, 0, 0, totalBytes - numVisibleBytes);
+			scrollValueDouble(m_imageScroll, (double)offset, 0, 0, totalBytes - numVisibleBytes);
 
 			m_imageScroll->linesize(numVisibleBytes / 4);
-			m_imageScroll->slider_size(float(numVisibleBytes) / float(totalBytes));
+			m_imageScroll->slider_size(double(numVisibleBytes) / double(totalBytes));
 		}
 		else
 		{
@@ -611,9 +641,9 @@ void PixelDbgWnd::updateScrollbar(u32 pos, bool resize)
 		}
 	}
 
-	if(pos != (u32)m_imageScroll->value())
+	if(pos != (off_t)std::floor(m_imageScroll->Fl_Valuator::value()))
 	{
-		m_imageScroll->value((int)pos);
+		m_imageScroll->value((double)pos);
 	}
 }
 
@@ -1047,14 +1077,18 @@ void PixelDbgWnd::flipVertically(int w, int h, void* data)
 	}
 }
 
-u32 PixelDbgWnd::readFile(const char* name, void* out, u32 size, u32 offset /* 0 */)
+size_t PixelDbgWnd::readFile(const char* name, void* out, size_t size, off_t offset /* 0 */)
 {
+	#if IS64BIT
+	FILE* f = fopen64(name, "rb");
+	#else
 	FILE* f = fopen(name, "rb");
+	#endif
 	if(f)
 	{
-		fseek(f, 0, SEEK_END);
-		u32 filesize = (u32)ftell(f);
-		fseek(f, offset, SEEK_SET);
+		fseeko(f, 0, SEEK_END);
+		size_t filesize = (size_t)ftello(f);
+		fseeko(f, offset, SEEK_SET);
 
 		size = std::min(size + offset, filesize) - offset;
 		fread(out, size, 1, f);
@@ -1173,9 +1207,13 @@ void PixelDbgWnd::ButtonCallback(Fl_Widget* widget, void* param)
 	{
 		int w = p->getImageWidth();
 		int h = p->getImageHeight();
-		int o = p->getOffset();
+		off_t o = p->getOffset();
 		const char* name = p->getCurrentFileName();
+		#if IS64BIT
+		const char* filename = formatString("%s_%dx%d_%lld.bmp", name ? name : "", w, h, o);
+		#else
 		const char* filename = formatString("%s_%dx%d_%d.bmp", name ? name : "", w, h, o);
+		#endif
 		
 		if(!p->writeBitmap(filename, w, h, p->m_pixels))
 		{
@@ -1184,14 +1222,18 @@ void PixelDbgWnd::ButtonCallback(Fl_Widget* widget, void* param)
 	}
 	else if(widget == &p->m_openButton)
 	{
-		u32 offset = (u32)std::max(atoi(p->m_offset.value()), 0);
+		off_t offset = (off_t)std::max(p->getOffset(), (off_t)0);
 		Fl_Native_File_Chooser browser;
 		const char* filename = p->m_currentFile;
 		
 		// Show file dialog only if we are not in auto-reload mode
 		if(p->m_autoReload.value() == 0)
 		{
+			#if IS64BIT
+			const char* title = formatString("Open file from offset: %lld Bytes", offset);
+			#else
 			const char* title = formatString("Open file from offset: %d Bytes", offset);
+			#endif
 
 			browser.title(title);
 			browser.type(Fl_Native_File_Chooser::BROWSE_FILE);
@@ -1209,11 +1251,15 @@ void PixelDbgWnd::ButtonCallback(Fl_Widget* widget, void* param)
 		
 		if(filename && filename[0] != 0)
 		{
+			#if IS64BIT
+			FILE* f = fopen64(filename, "rb");
+			#else
 			FILE* f = fopen(filename, "rb");
+			#endif
 			if(f)
 			{
-			    fseek(f, 0, SEEK_END);
-			    p->m_currentFileSize = (u32)ftell(f);
+			    fseeko(f, 0, SEEK_END);
+			    p->m_currentFileSize = (size_t)ftello(f);
 			    
 			    if(offset >= p->m_currentFileSize)
 			    {
@@ -1224,7 +1270,11 @@ void PixelDbgWnd::ButtonCallback(Fl_Widget* widget, void* param)
 						return;
 					}
 					
+					#if IS64BIT
+					fl_message("Offset %lld larger then file size (%lld Bytes). Reading from offset 0 instead.", offset, p->m_currentFileSize);
+					#else
 					fl_message("Offset %d larger then file size (%d Bytes). Reading from offset 0 instead.", offset, p->m_currentFileSize);
+					#endif
 					offset = 0;
 					p->m_accumOffset = 0;
 			    }
@@ -1243,11 +1293,11 @@ void PixelDbgWnd::ButtonCallback(Fl_Widget* widget, void* param)
 			        }
 			    }
 			    
-			    u32 size = std::min(p->m_currentFileSize - offset, kMaxImageSize);
+			    size_t size = std::min(p->m_currentFileSize - offset, (size_t)kMaxImageSize);
 			    p->m_accumOffset = offset;
 			    
 			    memset(p->m_text, 0, kMaxBufferSize);
-			    fseek(f, offset, SEEK_SET);
+			    fseeko(f, offset, SEEK_SET);
 			    fread(p->m_text, size, 1, f);
 			    fclose(f);
 			    
@@ -1266,15 +1316,20 @@ void PixelDbgWnd::ButtonCallback(Fl_Widget* widget, void* param)
 			    p->m_data.position(0, 0);
 				
 				// Assign new accumulation offset
-				p->m_offset.value(intToString(p->m_accumOffset));
+				p->m_offset.value(offsetToString(p->m_accumOffset));
 
 				// Update scroll bar on valid file
 				p->m_imageScroll->activate();
 				p->updateScrollbar(p->m_accumOffset, true);
 				
 				// Adjust window title
+				#if IS64BIT
+				const char* title = formatString("PixelDbg %u.%u  -  %s (%llu Bytes)", 
+					PixelDbgWnd::kVersionMajor, PixelDbgWnd::kVersionMinor, p->getCurrentFileName(), p->m_currentFileSize);
+				#else
 				const char* title = formatString("PixelDbg %u.%u  -  %s (%u Bytes)", 
 					PixelDbgWnd::kVersionMajor, PixelDbgWnd::kVersionMinor, p->getCurrentFileName(), p->m_currentFileSize);
+				#endif
 				p->copy_label(title);
 			}
 		}
@@ -1390,7 +1445,7 @@ void PixelDbgWnd::ChannelCallback(Fl_Widget* widget, void* param)
 		// Depending on the pixelformat conversion ratio the knob size can change
 		if(widget == &p->m_rgbaBits)
 		{
-			p->updateScrollbar(p->m_imageScroll->value(), true);
+			p->updateScrollbar(p->m_imageScroll->Fl_Valuator::value(), true);
 		}
 
 		RedrawCallback(widget, param);
@@ -1408,7 +1463,7 @@ void PixelDbgWnd::DimCallback(Fl_Widget* widget, void* param)
 
 	if(widget == &p->m_backwardButton || widget == &p->m_forwardButton)
 	{
-		u32 offset = p->m_accumOffset;
+		off_t offset = p->m_accumOffset;
 
 		if(widget == &p->m_backwardButton && offset > 0)
 		{
@@ -1421,14 +1476,14 @@ void PixelDbgWnd::DimCallback(Fl_Widget* widget, void* param)
 
 		if(offset != p->m_accumOffset)
 		{
-			p->m_imageScroll->value((int)offset);
+			p->m_imageScroll->Fl_Valuator::value((double)offset);
 
 			memset(p->m_pixels, 0, kMaxImageSize);
 
- 			if(u32 size = p->readFile(p->m_currentFile, p->m_text, kMaxBufferSize, offset))
+ 			if(size_t size = p->readFile(p->m_currentFile, p->m_text, kMaxBufferSize, offset))
 			{
 				p->m_accumOffset = offset;
-				p->m_offset.value(intToString(offset));
+				p->m_offset.value(offsetToString(offset));
 				p->m_data.static_value(reinterpret_cast<char*>(p->m_text), size);
 				p->m_data.position(0, 0);
 
@@ -1652,12 +1707,12 @@ void PixelDbgWnd::PaletteCallback(Fl_Widget* widget, void* param)
 			p->m_RLEMode.deactivate();
 		}
 		
-		p->updateScrollbar(p->m_imageScroll->value(), true);
+		p->updateScrollbar(p->m_imageScroll->Fl_Valuator::value(), true);
 		RedrawCallback(widget, param);
 	}
 	else if(widget == &p->m_loadPalette || widget == &p->m_paletteOffset)
 	{
-		u32 offset = (u32)atoi(p->m_paletteOffset.value());
+		off_t offset = p->getPaletteOffset();
 		const char* filename;
 		Fl_Native_File_Chooser browser;
 
@@ -1715,6 +1770,7 @@ void PixelDbgWnd::PaletteCallback(Fl_Widget* widget, void* param)
 		memset(p->m_rawPalette, 0, sizeof(p->m_rawPalette));
 		if(p->readFile(filename, p->m_rawPalette, sizeof(p->m_rawPalette), offset) != 0)
 		{
+			
 			p->convertPalette(p->m_rawPalette, sizeof(p->m_rawPalette), p->m_palette);
 
 			RedrawCallback(widget, param);
@@ -1723,9 +1779,13 @@ void PixelDbgWnd::PaletteCallback(Fl_Widget* widget, void* param)
 	else if(widget == &p->m_savePalette)
 	{
 		const char* name = p->getCurrentFileName();
-		int offset = p->getPaletteOffset();
+		off_t offset = p->getPaletteOffset();
 
+		#if IS64BIT
+		const char* filename = formatString("%s_palette_%lld.bmp", name, offset);
+		#else
 		const char* filename = formatString("%s_palette_%d.bmp", name, offset);
+		#endif
 		p->writeBitmap(filename, 32, 8, p->m_palette);
 	}
 }
@@ -1812,7 +1872,7 @@ void PixelDbgWnd::DXTCallback(Fl_Widget* widget, void* param)
 			p->updatePixelFormat();
 		}
 		
-		p->updateScrollbar(p->m_imageScroll->value(), true);
+		p->updateScrollbar(p->m_imageScroll->Fl_Valuator::value(), true);
 
 		RedrawCallback(widget, param);
 	}
@@ -1821,7 +1881,7 @@ void PixelDbgWnd::DXTCallback(Fl_Widget* widget, void* param)
 		// Set appropriate pixel format for DXT
 		p->m_rgbaBits.value("5.6.5.0");
 		p->updatePixelFormat();
-		p->updateScrollbar(p->m_imageScroll->value(), true);
+		p->updateScrollbar(p->m_imageScroll->Fl_Valuator::value(), true);
 		
 		RedrawCallback(widget, param);
 	}
@@ -1871,13 +1931,13 @@ void PixelDbgWnd::RLECallback(Fl_Widget* widget, void* param)
 			p->m_RLEType.activate();
 		}
 		
-		p->updateScrollbar(p->m_imageScroll->value(), true);
+		p->updateScrollbar(p->m_imageScroll->Fl_Valuator::value(), true);
 
 		RedrawCallback(widget, param);
 	}
 	else if(widget == &p->m_RLEType)
 	{
-		p->updateScrollbar(p->m_imageScroll->value(), true);
+		p->updateScrollbar(p->m_imageScroll->Fl_Valuator::value(), true);
 		
 		RedrawCallback(widget, param);
 	}
@@ -1916,8 +1976,8 @@ void PixelDbgWnd::ScrollbarCallback(Fl_Widget* widget, void* param)
 
 	if(widget == p->m_imageScroll)
 	{
-		u32 pos = (u32)p->m_imageScroll->value();
-		u32 offset = (u32)p->getOffset();
+		off_t pos = (off_t)std::floor(p->m_imageScroll->Fl_Valuator::value());
+		off_t offset = p->getOffset();
 		u32 numVisibleBytes = p->getNumVisibleBytes();
 
 		if(numVisibleBytes > p->m_currentFileSize || pos == p->m_currentFileSize || pos == offset)
@@ -1927,10 +1987,10 @@ void PixelDbgWnd::ScrollbarCallback(Fl_Widget* widget, void* param)
 
 		memset(p->m_pixels, 0, kMaxImageSize);
 
- 		if(u32 size = p->readFile(p->m_currentFile, p->m_text, kMaxBufferSize, pos))
+ 		if(size_t size = p->readFile(p->m_currentFile, p->m_text, kMaxBufferSize, pos))
 		{
 			p->m_accumOffset = pos;
-			p->m_offset.value(intToString(pos));
+			p->m_offset.value(offsetToString(pos));
 			p->m_data.static_value(reinterpret_cast<char*>(p->m_text), size);
 			p->m_data.position(0, 0);
 
@@ -1966,7 +2026,7 @@ void PixelDbgWnd::RedrawCallback(Fl_Widget* widget, void* param) // Callback to 
 	}
 	
 	// Print byte count
-	u32 maxVisible = std::min(p->m_currentFileSize - p->m_accumOffset, p->getNumVisibleBytes());
+	u32 maxVisible = std::min((u32)(p->m_currentFileSize - p->m_accumOffset), (u32)p->getNumVisibleBytes());
 	const char* byteCount = formatString("Visible: %.2f %%", float(maxVisible) / float(p->getNumVisibleBytes()) * 100.0f);
 	p->m_byteCount.copy_label(byteCount);
 

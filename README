@@ -1,4 +1,6 @@
-PixelDbg
+PixelDbg64
+
+Hacky fork of PixelDbg to allow opening large files (>2GB)
 
 /***************************************************************************
  *                                                                         *
@@ -31,7 +33,7 @@ data can be easily discovered with noise in the image (due to high entropy).
 
 Current features:
 
-* Rifle through gigabytes of data visually (unknown archives, OS swap files, etc.)
+* Rifle through gigabytes (and terabytes :^) ) of data visually (unknown archives, OS swap files, etc.)
 * Change pixelformat, scanline, tiling, etc on the fly to find images in any data
 * Visually tell if data might be compressed, encrypted or compressable
 * Save current view as an image for later analysis
@@ -41,7 +43,6 @@ Current limitations:
 
 * Maximum image resolution is 1024x1024
 * Window resize is clamped to maximum resolution
-* Maximum filesize is 2^32
 * Pixel format maximum is 32 bpp with no more then 8 bit per channel (i.e. valid format is 5.5.5.1 but not 9.9.9.5)
 * RLE mode is unpredictable in compression ratio, scrollbar can misbehave
 * PixelDbg was tested only on little-endian machines
